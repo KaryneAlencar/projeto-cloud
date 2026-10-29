@@ -89,7 +89,13 @@ def processar_mensagem(mensagem):
                 "Pedido %s confirmado", pedido_id
             )
 
-        elif pedido.status != "confirmado":
+        elif pedido.status == "confirmado":
+            logger.info(
+                "Pedido %s ja confirmado. Mensagem duplicada ignorada",
+                pedido_id
+            )
+
+        else:
             raise ValueError("Status inesperado")
 
     sqs.delete_message(

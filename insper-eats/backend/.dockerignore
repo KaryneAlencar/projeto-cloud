@@ -1,0 +1,31 @@
+
+# Ambiente virtual Python
+.venv/
+venv/
+
+# Cache do Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Variaveis de ambiente e credenciais
+.env
+.env.*
+!.env.example
+.aws/
+*.pem
+*.key
+
+# Git
+.git/
+.gitignore
+
+# Testes e arquivos temporarios
+teste_concorrencia.py
+.pytest_cache/
+*.log
+*.tmp
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
