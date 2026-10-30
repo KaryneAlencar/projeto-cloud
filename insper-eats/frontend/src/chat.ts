@@ -1,6 +1,6 @@
 export type Message = { id: string; papel: 'usuario' | 'assistente'; conteudo: string }
 export type Purchase = { id: string; cliente: string; local_entrega: string; total: number; itens: { nome: string; quantidade: number; preco_unitario: number }[]; status: 'preparando' | 'confirmado'; pedido_id?: string; pedido_status?: string }
-export type Conversation = { id: string; mensagens: Message[]; compra: Purchase | null; processadas?: string[] }
+export type Conversation = { id: string; mensagens: Message[]; compra: Purchase | null; processadas?: string[]; confirmacao_habilitada?: boolean }
 export const demoMode = import.meta.env.VITE_CHAT_MODE !== 'api'
 export const money = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const base = (import.meta.env.VITE_CHAT_API_URL || '/api').replace(/\/$/, '')
@@ -15,7 +15,10 @@ async function request(path: string, body?: unknown): Promise<Conversation> {
   let response: Response
   try { response = await fetch(`${base}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) }) }
   catch { throw new Error('O chat não respondeu. Confira a conexão e tente novamente.') }
-  if (!response.ok) throw new Error(response.status === 404 ? 'Conversa não encontrada. Inicie uma nova conversa.' : 'Não foi possível concluir. Tente novamente.')
+  if (!response.ok) {
+    const failure = await response.json().catch(() => null)
+    throw new Error(typeof failure?.detail === 'string' ? failure.detail : 'Não foi possível concluir. Tente novamente.')
+  }
   const c = await response.json()
   if (typeof c?.id !== 'string' || !Array.isArray(c.mensagens) || !('compra' in c)) throw new Error('Resposta incompatível com o chat.')
   return c

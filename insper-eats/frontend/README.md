@@ -39,7 +39,8 @@ VITE_CHAT_API_URL=/api
 
 Reinicie o Vite. O proxy local encaminha /api para http://127.0.0.1:8001,
 removendo o prefixo /api. A API de pedidos existente continua na porta 8000.
-O modo integrado não está disponível enquanto o Chat Service não for implementado.
+O Chat Service já existe em ../chat-service. Consulte o README dele para executar.
+Nesta etapa o modo integrado consulta dados reais e persiste conversas, sem IA nem criação de pedidos.
 Não há fallback silencioso para demonstração em caso de falha da API.
 
 Em produção, configure o ALB/reverse proxy para encaminhar /api ao Chat Service
@@ -47,7 +48,7 @@ ou defina VITE_CHAT_API_URL com a URL dele e configure CORS nesse serviço.
 As variáveis VITE_* são públicas e incorporadas no build. Nunca coloque chaves de IA,
 AWS ou senhas nelas. A interface se comunica exclusivamente com o Chat Service.
 
-## Contrato proposto (a implementar no Chat Service)
+## Contrato do Chat Service
 
 Todos os endpoints abaixo retornam a conversa completa no formato descrito a seguir:
 
@@ -81,7 +82,7 @@ Após registrar o pedido, compra.status é confirmado, com pedido_id (string) e
 pedido_status contendo o status real da API de pedidos. Confirmado aqui significa que
 a compra foi registrada; pedido_status distingue recebido de confirmado pelo worker.
 
-Responsabilidades do Chat Service na próxima etapa:
+Contrato previsto para a evolução do Chat Service (confirmação e IA ainda pendentes):
 
 - Persistir mensagens e estado da compra no PostgreSQL, sem depender de memória local.
 - Consultar o catálogo real pela API existente e fornecer preços/estoque reais.
