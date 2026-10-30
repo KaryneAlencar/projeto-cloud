@@ -28,21 +28,26 @@ class Order(BaseModel):
 
 
 class OrdersError(Exception):
-    def __init__(self, status, detail):
+    def __init__(self, status, detail, definitive=False):
         self.status = status
         self.detail = detail
+        self.definitive = definitive
 
 
 class OrdersClient:
     def __init__(self, base_url, timeout=5):
         self.base_url, self.timeout = base_url.rstrip("/"), timeout
 
-    def _get(self, path):
+    def _get(self, path, body=None):
         try:
-            req = Request(self.base_url + path, headers={"Accept": "application/json"})
+            req = Request(self.base_url + path,
+                          data=json.dumps(body).encode() if body is not None else None,
+                          headers={"Accept": "application/json", "Content-Type": "application/json"})
             with urlopen(req, timeout=self.timeout) as response:
                 return json.load(response)
         except HTTPError as exc:
+            if body is not None and exc.code in {400, 404, 409, 422}:
+                raise OrdersError(exc.code, "A API recusou o pedido. Confira produtos e estoque e prepare uma nova seleção.", definitive=True) from exc
             if exc.code == 404:
                 raise OrdersError(404, "Pedido não encontrado na API de pedidos.") from exc
             raise OrdersError(502, "A API de pedidos não conseguiu atender à consulta.") from exc
@@ -65,3 +70,10 @@ class OrdersClient:
             return Order.model_validate(self._get(f"/pedidos/{order_id}"))
         except ValidationError as exc:
             raise OrdersError(502, "A API retornou um pedido incompatível.") from exc
+
+    def create_order(self, payload):
+        try:
+            return Order.model_validate(self._get("/pedidos", payload))
+        except ValidationError as exc:
+            # Resposta inválida pode ocorrer DEPOIS de a API persistir a compra.
+            raise OrdersError(502, "Resposta de compra inválida. Repita a confirmação para recuperar o mesmo pedido.") from exc

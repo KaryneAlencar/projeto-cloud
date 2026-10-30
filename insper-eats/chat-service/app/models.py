@@ -47,3 +47,15 @@ class MessageRequest(Base):
     mensagem_id: Mapped[str] = mapped_column(String(36))
     conteudo: Mapped[str] = mapped_column(Text)
     resposta: Mapped[dict] = mapped_column(JSON)
+
+
+class CheckoutAttempt(Base):
+    """Payload imutável, persistido ANTES de qualquer POST de compra."""
+    __tablename__ = "chat_confirmacao"
+    compra_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    conversa_id: Mapped[str] = mapped_column(ForeignKey("chat_conversa.id"), index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(16), default="pendente")
+    resposta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    erro: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    criada_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

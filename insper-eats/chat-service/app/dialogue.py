@@ -13,6 +13,8 @@ def normalized(text):
 def reply(conversation, text, orders):
     content = normalized(text)
     if content in {"cancelar", "cancela", "cancelar compra"}:
+        if conversation.compra and conversation.compra["status"] == "confirmado":
+            return "Esse pedido já foi registrado. Não é possível cancelá-lo pelo chat."
         conversation.compra = None
         conversation.chave_idempotencia = None
         conversation.estado = "aberta"
@@ -66,7 +68,7 @@ def reply(conversation, text, orders):
         }
         conversation.chave_idempotencia = purchase_id
         conversation.estado = "preparando"
-        return 'Seleção salva, sem reservar estoque. Envie “Meu nome é Ana” e “Entrega: sala 512, prédio 2”. Uma nova seleção substitui a anterior. A criação de pedidos será habilitada em uma próxima etapa.'
+        return 'Seleção salva, sem reservar estoque. Envie “Meu nome é Ana” e “Entrega: sala 512, prédio 2”. Uma nova seleção substitui a anterior. Revise o resumo e use o botão Confirmar pedido para comprar.'
 
     name = re.match(r"^(?:meu nome é|meu nome e|nome:)\s*(.*)$", text, re.I)
     address = re.match(r"^entrega:\s*(.*)$", text, re.I)
@@ -82,6 +84,6 @@ def reply(conversation, text, orders):
         purchase["id"] = new_id()
         conversation.compra = purchase
         conversation.chave_idempotencia = purchase["id"]
-        return "Informação salva. Confira o resumo da seleção. A confirmação comercial ainda não está habilitada."
+        return "Informação salva. Confira o resumo da seleção. Use o botão Confirmar pedido após revisar os dados."
 
     return 'Esta etapa ainda não usa IA. Posso consultar o catálogo real (“Ver o cardápio”), preparar uma seleção (“Quero 2 brownies”) ou consultar um pedido (“Pedido 4”).'

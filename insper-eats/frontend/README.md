@@ -12,9 +12,10 @@ npm run dev
 ```
 
 O terminal mostra o endereço local (normalmente http://localhost:5173).
-O modo padrão é demonstração: não precisa de banco, API, AWS ou credenciais.
+O modo padrão é integrado (api): exige Chat Service, banco, API de pedidos e chave de IA.
+Para testar apenas a interface sem dependências, defina VITE_CHAT_MODE=demo em .env.local e reinicie o Vite.
 
-## Testar a demonstração
+## Testar a demonstração (VITE_CHAT_MODE=demo)
 
 1. Clique em Ver o cardápio.
 2. Envie Quero 2 brownies (também aceita cookies e pão de queijo; 1 a 20 unidades por produto).
@@ -40,7 +41,8 @@ VITE_CHAT_API_URL=/api
 Reinicie o Vite. O proxy local encaminha /api para http://127.0.0.1:8001,
 removendo o prefixo /api. A API de pedidos existente continua na porta 8000.
 O Chat Service já existe em ../chat-service. Consulte o README dele para executar.
-Nesta etapa o modo integrado consulta dados reais e persiste conversas, sem IA nem criação de pedidos.
+O modo integrado usa IA e pode criar pedidos REAIS após confirmação pelo botão.
+Configure GEMINI_API_KEY e GEMINI_MODEL (AI_PROVIDER=gemini) no .env do Chat Service. Nunca coloque chaves no frontend.
 Não há fallback silencioso para demonstração em caso de falha da API.
 
 Em produção, configure o ALB/reverse proxy para encaminhar /api ao Chat Service
@@ -82,7 +84,7 @@ Após registrar o pedido, compra.status é confirmado, com pedido_id (string) e
 pedido_status contendo o status real da API de pedidos. Confirmado aqui significa que
 a compra foi registrada; pedido_status distingue recebido de confirmado pelo worker.
 
-Contrato previsto para a evolução do Chat Service (confirmação e IA ainda pendentes):
+Responsabilidades implementadas no Chat Service:
 
 - Persistir mensagens e estado da compra no PostgreSQL, sem depender de memória local.
 - Consultar o catálogo real pela API existente e fornecer preços/estoque reais.
@@ -109,3 +111,13 @@ npm run build
 
 Gera dist/. Para conferir a versão compilada: npm run preview.
 O proxy do Vite é de desenvolvimento; a implantação precisa do roteamento descrito acima.
+
+## Confirmação e recuperação
+
+No modo integrado, Confirmar pedido executa uma compra real. Somente clicar nesse botão
+chama o endpoint de confirmação; escrever sim na conversa não compra. Em timeout, o chat
+mantém a seleção com status confirmando e oferece Repetir confirmação. A seleção fica
+congelada até recuperar o resultado. O servidor reutiliza o payload e a chave persistidos.
+Status confirmado indica pedido registrado; pedido_status contém o estado real do backend.
+Se o preço mudar antes da primeira tentativa, o servidor devolve o resumo atualizado com
+nova versão, sem criar pedido. Revise e clique novamente para confirmar.

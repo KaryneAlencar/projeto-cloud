@@ -1,7 +1,7 @@
 export type Message = { id: string; papel: 'usuario' | 'assistente'; conteudo: string }
-export type Purchase = { id: string; cliente: string; local_entrega: string; total: number; itens: { nome: string; quantidade: number; preco_unitario: number }[]; status: 'preparando' | 'confirmado'; pedido_id?: string; pedido_status?: string }
+export type Purchase = { id: string; cliente: string; local_entrega: string; total: number; itens: { nome: string; quantidade: number; preco_unitario: number }[]; status: 'preparando' | 'confirmando' | 'confirmado'; pedido_id?: string; pedido_status?: string }
 export type Conversation = { id: string; mensagens: Message[]; compra: Purchase | null; processadas?: string[]; confirmacao_habilitada?: boolean }
-export const demoMode = import.meta.env.VITE_CHAT_MODE !== 'api'
+export const demoMode = import.meta.env.VITE_CHAT_MODE === 'demo'
 export const money = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const base = (import.meta.env.VITE_CHAT_API_URL || '/api').replace(/\/$/, '')
 const key = (id: string) => `insper-eats:demo:${id}`
