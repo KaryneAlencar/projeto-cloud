@@ -1,5 +1,7 @@
 """Adapter Gemini REST: preserva contents nativos e thoughtSignature entre ferramentas."""
 import json
+import logging
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -7,10 +9,31 @@ from uuid import uuid4
 
 from .ai import AIError, INSTRUCTIONS, TOOLS
 
+logger = logging.getLogger("insper-eats-chat")
+
 
 class GeminiGenerateContent:
     def __init__(self, settings):
         self.settings = settings
+
+    def request_with_retry(self, request, timeout):
+        deadline = time.monotonic() + timeout
+        for attempt in range(3):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Prazo da chamada esgotado")
+            try:
+                with urlopen(request, timeout=remaining) as response:
+                    return json.load(response)
+            except HTTPError as exc:
+                if exc.code not in {500, 502, 503, 504} or attempt == 2:
+                    raise
+                delay = 2 ** attempt
+                if deadline - time.monotonic() <= delay:
+                    raise
+                logger.warning("gemini_retry status=%s next_attempt=%s wait_seconds=%s", exc.code, attempt + 2, delay)
+                exc.close()
+                time.sleep(delay)
 
     def payload(self, items):
         contents, context, calls = [], [], {}
@@ -58,23 +81,33 @@ class GeminiGenerateContent:
                       data=json.dumps(self.payload(items)).encode(),
                       headers={"Content-Type": "application/json", "x-goog-api-key": self.settings.gemini_api_key})
         try:
-            with urlopen(req, timeout=timeout) as response:
-                data = json.load(response)
+            data = self.request_with_retry(req, timeout)
         except HTTPError as exc:
+            if exc.code in {500, 502, 503, 504}:
+                raise AIError("O Gemini está temporariamente indisponível, mesmo após novas tentativas. Tente novamente em instantes.", f"gemini_http_{exc.code}") from exc
             if exc.code == 429:
-                raise AIError("Limite de uso do Gemini atingido. Aguarde e confira a cota no Google AI Studio.") from exc
+                raise AIError("Limite de uso do Gemini atingido. Aguarde e confira a cota no Google AI Studio.", "gemini_http_429") from exc
             if exc.code in {401, 403}:
-                raise AIError("O Gemini recusou a chave ou o acesso. Confira GEMINI_API_KEY e as permissões do projeto.") from exc
+                raise AIError("O Gemini recusou a chave ou o acesso. Confira GEMINI_API_KEY e as permissões do projeto.", f"gemini_http_{exc.code}") from exc
             if exc.code == 404:
-                raise AIError("Modelo Gemini não disponível. Confira GEMINI_MODEL no Google AI Studio.") from exc
-            raise AIError("O Gemini não conseguiu atender. Confira o modelo/configuração ou tente novamente.") from exc
-        except (URLError, TimeoutError, OSError, ValueError) as exc:
-            raise AIError("O Gemini está indisponível ou retornou dados inválidos. Tente novamente.") from exc
+                raise AIError("Modelo Gemini não disponível. Confira GEMINI_MODEL no Google AI Studio.", "gemini_http_404") from exc
+            raise AIError("O Gemini não conseguiu atender. Confira o modelo/configuração ou tente novamente.", f"gemini_http_{exc.code}") from exc
+        except TimeoutError as exc:
+            raise AIError("O Gemini excedeu o tempo de espera desta etapa. Tente novamente.", "gemini_timeout") from exc
+        except (URLError, OSError, ValueError) as exc:
+            raise AIError("O Gemini está indisponível ou retornou dados inválidos. Tente novamente.", "gemini_transport_error") from exc
 
         try:
             candidate = data["candidates"][0]
-            if candidate.get("finishReason") != "STOP":
-                raise AIError("O Gemini interrompeu ou bloqueou a resposta. Reformule a mensagem e tente novamente.")
+            finish = candidate.get("finishReason")
+            if finish != "STOP":
+                if finish == "MAX_TOKENS":
+                    raise AIError("O Gemini atingiu o limite de geração da resposta. Tente uma consulta mais específica.", "gemini_max_tokens")
+                if finish == "MALFORMED_FUNCTION_CALL":
+                    raise AIError("O Gemini retornou uma chamada de ferramenta inválida. Tente novamente.", "gemini_malformed_function_call")
+                if finish in {"SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}:
+                    raise AIError("O Gemini bloqueou a resposta. Reformule a mensagem e tente novamente.", "gemini_blocked")
+                raise AIError("O Gemini interrompeu a resposta. Tente novamente.", "gemini_incomplete")
             content = candidate["content"]
             if content.get("role") != "model" or not isinstance(content.get("parts"), list):
                 raise ValueError("Content inválido")

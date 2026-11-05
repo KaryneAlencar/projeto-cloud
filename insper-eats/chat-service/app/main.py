@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 
 from .config import Settings
+from .logging_setup import configure_logging
 from .ai import AIError, OpenAIResponses, respond
 from .gemini import GeminiGenerateContent
 from .checkout import confirm_purchase
@@ -15,6 +16,8 @@ from .database import connect_database
 from .dialogue import reply
 from .models import Base, Conversation, Message, MessageRequest, now
 from .orders import OrdersClient, OrdersError
+from .presentation import customer_message
+from .order_history import list_conversation_orders
 
 logger = logging.getLogger("insper-eats-chat")
 
@@ -33,12 +36,13 @@ def snapshot(session, conversation):
     return {
         "id": conversation.id,
         "confirmacao_habilitada": True,
-        "mensagens": [{"id": m.id, "papel": m.papel, "conteudo": m.conteudo, "criado_em": m.criada_em.isoformat()} for m in messages],
+        "mensagens": [{"id": m.id, "papel": m.papel, "conteudo": customer_message(m.conteudo) if m.papel == "assistente" else m.conteudo, "criado_em": m.criada_em.isoformat()} for m in messages],
         "compra": conversation.compra,
     }
 
 
 def create_app(settings=None, *, engine=None, orders=None, ai=None):
+    configure_logging()
     settings = settings or Settings.from_env()
     database, sessions = connect_database(settings.database_url)
     if engine is not None:
@@ -64,8 +68,8 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
 
     @app.exception_handler(AIError)
     async def ai_failure(_request: Request, exc: AIError):
-        logger.warning("ai_dependency_failure")
-        return JSONResponse(status_code=503, content={"detail": str(exc)})
+        logger.warning("ai_dependency_failure code=%s reason=%s", exc.code, str(exc))
+        return JSONResponse(status_code=503, content={"detail": str(exc), "code": exc.code})
 
     def find_conversation(session, conversation_id, *, lock=False):
         statement = select(Conversation).where(Conversation.id == str(conversation_id))
@@ -109,6 +113,12 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
         with sessions() as session:
             return snapshot(session, find_conversation(session, conversation_id))
 
+    @app.get("/chat/conversas/{conversation_id}/pedidos")
+    def get_conversation_orders(conversation_id: UUID):
+        with sessions() as session:
+            find_conversation(session, conversation_id)
+            return list_conversation_orders(session, conversation_id, client)
+
     @app.post("/chat/conversas/{conversation_id}/mensagens")
     def send_message(conversation_id: UUID, payload: IncomingMessage):
         content = payload.conteudo.strip()
@@ -131,7 +141,8 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
                 answer = reply(conversation, content, client)
             else:
                 history = session.scalars(select(Message).where(Message.conversa_id == conversation.id).order_by(Message.sequencia)).all()
-                answer = respond(conversation, history, content, client, provider, settings.ai_timeout)
+                answer = respond(conversation, history, content, client, provider, settings.ai_timeout,
+                                 list_orders=lambda: list_conversation_orders(session, conversation.id, client))
             conversation.atualizada_em = now()
             session.add(Message(conversa_id=conversation.id, papel="usuario", conteudo=content))
             session.flush()

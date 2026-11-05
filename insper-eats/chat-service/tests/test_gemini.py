@@ -50,8 +50,45 @@ class GeminiTests(unittest.TestCase):
         with self.assertRaisesRegex(AIError, "GEMINI_API_KEY"):
             GeminiGenerateContent(Settings("unused")).generate([], 10)
         with patch("app.gemini.urlopen", side_effect=HTTPError("https://example.test", 429, "quota", {}, None)):
-            with self.assertRaisesRegex(AIError, "Limite de uso"):
+            with self.assertRaisesRegex(AIError, "Limite de uso") as captured:
                 self.provider.generate([], 10)
+        self.assertEqual(captured.exception.code, 'gemini_http_429')
+
+    def test_token_limit_distinguished_from_timeout(self):
+        with patch("app.gemini.urlopen", return_value=response([], finish="MAX_TOKENS")):
+            with self.assertRaises(AIError) as captured:
+                self.provider.generate([], 10)
+        self.assertEqual(captured.exception.code, 'gemini_max_tokens')
+        with patch("app.gemini.urlopen", side_effect=TimeoutError):
+            with self.assertRaises(AIError) as captured:
+                self.provider.generate([], 10)
+        self.assertEqual(captured.exception.code, 'gemini_timeout')
+
+    def test_transient_503_retries_same_payload_then_succeeds(self):
+        error = HTTPError("https://example.test", 503, "unavailable", {}, None)
+        with patch("app.gemini.urlopen", side_effect=[error, response([{"text": "Olá"}])]) as transport, patch("app.gemini.time.sleep") as sleep:
+            result = self.provider.generate([{"role": "user", "content": "Oi"}], 120)
+        self.assertEqual(transport.call_count, 2)
+        self.assertEqual(transport.call_args_list[0].args[0].data, transport.call_args_list[1].args[0].data)
+        sleep.assert_called_once_with(1)
+        self.assertEqual(result[-1]['content'][0]['text'], 'Olá')
+
+    def test_persistent_503_stops_after_three_attempts(self):
+        errors = [HTTPError("https://example.test", 503, "unavailable", {}, None) for _ in range(3)]
+        with patch("app.gemini.urlopen", side_effect=errors) as transport, patch("app.gemini.time.sleep") as sleep:
+            with self.assertRaises(AIError) as captured:
+                self.provider.generate([], 120)
+        self.assertEqual(transport.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        self.assertEqual(captured.exception.code, 'gemini_http_503')
+
+    def test_retry_does_not_exceed_available_deadline(self):
+        error = HTTPError("https://example.test", 503, "unavailable", {}, None)
+        with patch("app.gemini.urlopen", side_effect=error) as transport, patch("app.gemini.time.sleep") as sleep, patch("app.gemini.time.monotonic", side_effect=[0, 0, 5]):
+            with self.assertRaises(AIError):
+                self.provider.generate([], 5)
+        self.assertEqual(transport.call_count, 1)
+        sleep.assert_not_called()
 
     def test_blocked_response_and_thought_not_displayed(self):
         with patch("app.gemini.urlopen", return_value=response([{"text": "internal", "thought": True}, {"text": "Olá"}])):

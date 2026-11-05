@@ -29,9 +29,12 @@ def reply(conversation, text, orders):
         products = orders.products()
         if not products:
             return "O catálogo está vazio no momento. Nenhum produto foi inventado."
-        return "Catálogo real:\n" + "\n".join(
-            f"{p.nome} (ID {p.id}) · R$ {p.preco:.2f} · estoque {p.estoque}" for p in products
-        ) + '\n\nPara preparar uma seleção, envie “Quero 2 brownies” ou “Selecionar 1:2, 2:1” (ID:quantidade).'
+        available = [p for p in products if p.estoque > 0]
+        if not available:
+            return "Não temos produtos disponíveis no momento."
+        return "Nosso cardápio:\n" + "\n".join(
+            f"- **{p.nome}** · R$ {p.preco:.2f}" for p in available
+        ) + '\n\nO que você gostaria de pedir?'
 
     if content.startswith("selecionar ") or content.startswith("quero "):
         products = orders.products()
@@ -59,7 +62,7 @@ def reply(conversation, text, orders):
             return "Informe cada produto apenas uma vez."
         for product, quantity in selection:
             if quantity < 1 or quantity > product.estoque:
-                return f"Quantidade indisponível para {product.nome}. Estoque atual: {product.estoque}."
+                return f"Não temos a quantidade solicitada de {product.nome} disponível. Quer escolher uma quantidade menor?"
         purchase_id = new_id()
         conversation.compra = {
             "id": purchase_id, "status": "preparando", "cliente": "", "local_entrega": "",

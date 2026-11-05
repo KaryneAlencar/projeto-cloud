@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.main import create_app
-from app.models import Base, Conversation
+from app.models import Base, Conversation, Message
 from app.orders import Order, OrdersClient, OrdersError, Product
 
 
@@ -46,6 +46,9 @@ class FakeOrders:
 
     def order(self, order_id):
         if order_id != 7:
+            for order in self.created.values():
+                if order.id == order_id:
+                    return order
             raise OrdersError(404, "Pedido não encontrado")
         return Order(id=7, status="recebido", total="8.10", itens=[])
 
@@ -89,6 +92,17 @@ class ServiceTests(unittest.TestCase):
         result = self.send(self.conversation(), "Ver o cardápio").json()
         self.assertIn("8.10", result["mensagens"][-1]["conteudo"])
 
+    def test_old_history_is_cleaned_only_for_assistant_messages(self):
+        cid = self.conversation()
+        raw = '**Brownie** (ID: 10) - R$ 8,10 (Estoque: 3)'
+        with Session(self.engine) as session:
+            session.add(Message(conversa_id=cid, papel='assistente', conteudo=raw))
+            session.add(Message(conversa_id=cid, papel='usuario', conteudo=raw))
+            session.commit()
+        history = self.client.get(f'/chat/conversas/{cid}').json()['mensagens']
+        self.assertEqual(history[-2]['conteudo'], '**Brownie** - R$ 8,10')
+        self.assertEqual(history[-1]['conteudo'], raw)
+
     def test_persistence_restart_and_idempotency_key(self):
         cid = self.conversation()
         result = self.send(cid, "Quero 2 brownies").json()
@@ -125,6 +139,44 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(self.fake.created), 1)
         self.assertEqual(len(self.fake.calls), 1)
         self.assertEqual(results[0].json()["compra"]["pedido_id"], results[1].json()["compra"]["pedido_id"])
+
+    def test_list_orders_includes_all_conversation_purchases_and_current_status(self):
+        cid, purchase_id = self.prepared()
+        first = self.confirm(cid, purchase_id).json()['compra']['pedido_id']
+        self.send(cid, 'Quero 2 brownies')
+        self.send(cid, 'Meu nome é Ana')
+        second_id = self.send(cid, 'Entrega: sala 512').json()['compra']['id']
+        second = self.confirm(cid, second_id).json()['compra']['pedido_id']
+        other, other_purchase = self.prepared()
+        other_order = self.confirm(other, other_purchase).json()['compra']['pedido_id']
+        self.fake.created[purchase_id].status = 'confirmado'
+        result = self.client.get(f'/chat/conversas/{cid}/pedidos')
+        self.assertEqual(result.status_code, 200)
+        listed = result.json()['pedidos']
+        self.assertEqual({str(p['pedido_id']) for p in listed}, {first, second})
+        self.assertNotIn(other_order, {str(p['pedido_id']) for p in listed})
+        self.assertEqual(next(p for p in listed if str(p['pedido_id']) == first)['status'], 'confirmado')
+        empty = self.conversation()
+        self.assertEqual(self.client.get(f'/chat/conversas/{empty}/pedidos').json()['pedidos'], [])
+
+    def test_ai_can_list_real_orders_of_its_conversation(self):
+        cid, purchase_id = self.prepared()
+        order_id = self.confirm(cid, purchase_id).json()['compra']['pedido_id']
+        import json
+        class HistoryAI:
+            step = 0
+            def generate(inner, items, timeout):
+                inner.step += 1
+                if inner.step == 1:
+                    return [{'type': 'function_call', 'name': 'listar_meus_pedidos', 'arguments': '{}', 'call_id': 'history'}]
+                result = json.loads(items[-1]['output'])
+                self.assertEqual(str(result['pedidos'][0]['pedido_id']), order_id)
+                return [{'type': 'message', 'content': [{'type': 'output_text', 'text': f'Pedido #{order_id}: recebido.'}]}]
+        with TestClient(create_app(Settings(self.url), engine=self.new_engine(), orders=self.fake, ai=HistoryAI())) as client:
+            result = client.post(f'/chat/conversas/{cid}/mensagens', json={'conteudo': 'Liste meus pedidos', 'mensagem_id': str(uuid4())})
+        self.assertEqual(result.status_code, 200)
+        self.assertIn(f'#{order_id}', result.json()['mensagens'][-1]['conteudo'])
+        self.assertEqual(len(self.fake.calls), 1)
 
     def test_lost_response_restart_and_retry_frozen_payload(self):
         cid, purchase_id = self.prepared()

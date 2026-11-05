@@ -13,8 +13,11 @@ function read(id: string): Conversation {
 }
 async function request(path: string, body?: unknown): Promise<Conversation> {
   let response: Response
-  try { response = await fetch(`${base}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) }) }
-  catch { throw new Error('O chat não respondeu. Confira a conexão e tente novamente.') }
+  try { response = await fetch(`${base}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(150000) }) }
+  catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('O chat excedeu o tempo de espera de 150 segundos. Tente novamente.')
+    throw new Error('O chat não respondeu. Confira a conexão e tente novamente.')
+  }
   if (!response.ok) {
     const failure = await response.json().catch(() => null)
     throw new Error(typeof failure?.detail === 'string' ? failure.detail : 'Não foi possível concluir. Tente novamente.')

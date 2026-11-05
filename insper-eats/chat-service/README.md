@@ -24,7 +24,7 @@ ORDERS_API_TIMEOUT=5
 AI_PROVIDER=gemini
 GEMINI_API_KEY=SUA_CHAVE_LOCAL
 GEMINI_MODEL=gemini-2.5-flash
-AI_TIMEOUT=15
+AI_TIMEOUT=120
 ```
 
 Crie sua chave em https://aistudio.google.com/apikey e coloque-a somente no .env local.
@@ -151,3 +151,25 @@ ferramentas com catálogo, isolamento e duplicidade de mensagens.
 
 O sistema ainda não possui autenticação por conversa/pedido. Mantenha o serviço local
 até implementar identidade e autorização antes da exposição na AWS.
+
+## Teste com prazo maior
+
+AI_TIMEOUT=120 define o orçamento total do ciclo de ferramentas da IA, não 120 segundos por chamada.
+Cada rodada recebe somente o tempo restante. O frontend e o proxy local aguardam até 150 segundos.
+As consultas da API de pedidos preservam seu limite independente ORDERS_API_TIMEOUT=5.
+Reinicie o Chat Service e o Vite após alterar a configuração. Os logs ai_round registram
+round, elapsed_seconds e budget_seconds para comparar o tempo das etapas sem mostrar conteúdo
+da conversa nem credenciais. Na execução pelo Uvicorn, use --log-level info para visualizar esses tempos no terminal.
+
+## Falhas temporárias do provedor e meus pedidos
+
+Erros HTTP 500/502/503/504 do Gemini têm no máximo três tentativas por chamada, com pausas
+de 1 e 2 segundos. O tempo de rede e as pausas consomem o mesmo orçamento restante da IA.
+As retentativas reutilizam o mesmo pedido de geração, sem reexecutar ferramentas nem criar compras.
+Erros de chave, cota (429) e validação não são repetidos automaticamente.
+
+A ferramenta listar_meus_pedidos e GET /chat/conversas/{id}/pedidos consultam as compras
+confirmadas nesta conversa, recuperando seu status atual via API de pedidos. Uma seleção
+preparada, tentativa incerta ou compra de outra conversa não aparece nessa lista. Não existe
+identidade autenticada para reunir compras feitas em conversas diferentes pelo mesmo usuário.
+O endpoint de histórico pode ser consultado diretamente mesmo quando a IA está indisponível.

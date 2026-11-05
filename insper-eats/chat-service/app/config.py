@@ -13,7 +13,7 @@ class Settings:
     ai_provider: str = "gemini"
     openai_api_key: str = ""
     openai_model: str = ""
-    ai_timeout: float = 15.0
+    ai_timeout: float = 120.0
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
@@ -40,9 +40,9 @@ class Settings:
         provider = os.getenv("AI_PROVIDER", "gemini")
         if provider not in {"gemini", "openai", "commands"}:
             raise RuntimeError("AI_PROVIDER deve ser gemini, openai ou commands")
-        ai_timeout = float(os.getenv("AI_TIMEOUT", "15"))
-        if not 0 < ai_timeout <= 25:
-            raise RuntimeError("AI_TIMEOUT deve estar entre 0 e 25 segundos")
+        ai_timeout = float(os.getenv("AI_TIMEOUT", "120"))
+        if not 0 < ai_timeout <= 120:
+            raise RuntimeError("AI_TIMEOUT deve ser maior que 0 e no máximo 120 segundos")
         return cls(url, os.getenv("ORDERS_API_URL", "http://127.0.0.1:8000").rstrip("/"), timeout,
                    provider, os.getenv("OPENAI_API_KEY", ""), os.getenv("OPENAI_MODEL", ""),
                    ai_timeout, os.getenv("GEMINI_API_KEY", ""), os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))

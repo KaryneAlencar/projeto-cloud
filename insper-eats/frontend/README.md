@@ -99,7 +99,7 @@ Responsabilidades implementadas no Chat Service:
 
 A trava de envio da interface evita cliques simultâneos nesta aba; não substitui a
 idempotência no servidor. A mesma tentativa de mensagem conserva mensagem_id enquanto
-o conteúdo não muda. Timeout: 30 segundos. Em falha, o texto digitado permanece disponível.
+o conteúdo não muda. Timeout: 150 segundos, com margem para o ciclo de IA de até 120 segundos. Em falha, o texto digitado permanece disponível.
 O navegador guarda apenas o identificador da conversa no modo integrado; o servidor
 precisa fornecer o histórico. Não há autenticação implementada nesta etapa.
 
@@ -121,3 +121,11 @@ congelada até recuperar o resultado. O servidor reutiliza o payload e a chave p
 Status confirmado indica pedido registrado; pedido_status contém o estado real do backend.
 Se o preço mudar antes da primeira tentativa, o servidor devolve o resumo atualizado com
 nova versão, sem criar pedido. Revise e clique novamente para confirmar.
+
+## Apresentação das mensagens
+
+Respostas do assistente exibem negrito com **texto** e listas de itens. Mensagens antigas
+com asteriscos escapados também são reconhecidas. HTML permanece texto, sem execução.
+Mensagens do usuário são exibidas literalmente. O Chat Service remove rótulos técnicos
+de ID de produto e contagem de estoque da apresentação, inclusive no histórico recuperado.
+Os dados internos da seleção e as validações de estoque continuam disponíveis ao serviço.
