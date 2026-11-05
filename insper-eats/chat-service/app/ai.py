@@ -27,7 +27,7 @@ nullable_string = {"type": ["string", "null"]}
 TOOLS = [
     tool("listar_produtos", "Consultar catálogo, preços e estoque reais antes de responder sobre produtos.", {}, []),
     tool("consultar_pedido", "Consultar o status real de um pedido pelo ID.", {"pedido_id": {"type": "integer"}}, ["pedido_id"]),
-    tool("listar_meus_pedidos", "Listar os pedidos registrados nesta conversa com número, total e status atualizado. Não pesquisa por nome nem retorna pedidos de outras conversas.", {}, []),
+    tool("listar_meus_pedidos", "Listar os pedidos da sessão atual do navegador com número, total e status atualizado. Não pesquisa por nome nem retorna pedidos de outras sessões.", {}, []),
     tool("preparar_compra", "Preparar/substituir a seleção completa, sem comprar. Consulte o catálogo para obter IDs reais. Nunca assuma quantidade ambígua.",
          {"itens": {"type": "array", "items": {"type": "object", "properties": {"produto_id": {"type": "integer"}, "quantidade": {"type": "integer"}}, "required": ["produto_id", "quantidade"], "additionalProperties": False}}, "cliente": nullable_string, "local_entrega": nullable_string}, ["itens", "cliente", "local_entrega"]),
     tool("atualizar_entrega", "Atualizar nome e local de entrega informados pelo usuário. Use null para campos não informados.", {"cliente": nullable_string, "local_entrega": nullable_string}, ["cliente", "local_entrega"]),
@@ -36,7 +36,7 @@ TOOLS = [
 
 INSTRUCTIONS = """Você é o vendedor do Insper Eats. Responda em português, com clareza e concisão.
 Consulte listar_produtos para preços, disponibilidade ou recomendações; use apenas dados reais.
-Quando o usuário pedir 'meus pedidos', use listar_meus_pedidos e esclareça que são os pedidos desta conversa.
+Quando o usuário pedir 'meus pedidos', use listar_meus_pedidos e esclareça que são os pedidos deste navegador.
 Não invente pedidos nem associe pedidos de outras pessoas pelo nome. Para um número específico, use consultar_pedido.
 Ao apresentar o cardápio, mostre somente nome e preço em reais de cada opção disponível.
 IDs de produtos e quantidades de estoque são dados internos: nunca os inclua na mensagem ao cliente.

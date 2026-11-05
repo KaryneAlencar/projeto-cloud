@@ -1,23 +1,27 @@
 import logging
 from contextlib import asynccontextmanager
-from uuid import UUID
+from uuid import UUID, uuid4
+import time
 
-from fastapi import FastAPI, HTTPException, Path, Request
+from fastapi import FastAPI, HTTPException, Path, Request, Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
+from sqlalchemy.exc import OperationalError
 
 from .config import Settings
-from .logging_setup import configure_logging
+from .logging_setup import configure_logging, request_id_context
 from .ai import AIError, OpenAIResponses, respond
 from .gemini import GeminiGenerateContent
 from .checkout import confirm_purchase
 from .database import connect_database
 from .dialogue import reply
-from .models import Base, Conversation, Message, MessageRequest, now
+from .models import Base, Conversation, ConversationAccess, Message, MessageRequest, BrowserSession, now
 from .orders import OrdersClient, OrdersError
 from .presentation import customer_message
-from .order_history import list_conversation_orders
+from .order_history import list_conversation_orders, list_browser_orders, OwnedOrdersClient
+from .security import owner_context, start_session, verify_request
 
 logger = logging.getLogger("insper-eats-chat")
 
@@ -55,11 +59,59 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
     @asynccontextmanager
     async def lifespan(_app):
         # Metadados exclusivos do chat: não importa modelos do backend da Pessoa 1.
-        Base.metadata.create_all(database)
+        with database.begin() as connection:
+            # Serializa criação aditiva das tabelas entre workers/tasks.
+            connection.execute(text("SELECT pg_advisory_xact_lock(18742011)"))
+            Base.metadata.create_all(connection)
         yield
         database.dispose()
 
     app = FastAPI(title="Insper Eats Chat Service", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):
+        try:
+            request_id = str(UUID(request.headers.get("x-request-id", "")))
+        except ValueError:
+            request_id = str(uuid4())
+        trace = request_id_context.set(request_id)
+        owner_token = None
+        started = time.monotonic()
+        try:
+            if request.url.path.startswith("/chat/") and request.url.path != "/chat/sessao":
+                try:
+                    owner = await run_in_threadpool(verify_request, request, sessions, settings)
+                except HTTPException as exc:
+                    response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+                    response.headers["X-Request-ID"] = request_id
+                    response.headers["Cache-Control"] = "no-store"
+                    return response
+                except OperationalError:
+                    response = JSONResponse(status_code=503, content={"detail": "O banco de conversas está indisponível. Tente novamente em instantes."})
+                    response.headers["X-Request-ID"] = request_id
+                    return response
+                owner_token = owner_context.set(owner)
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            if request.url.path.startswith("/chat/"):
+                response.headers["Cache-Control"] = "no-store"
+            logger.info("http_request method=%s path=%s status=%s elapsed_ms=%.1f", request.method, request.url.path, response.status_code, (time.monotonic() - started) * 1000)
+            return response
+        finally:
+            if owner_token is not None:
+                owner_context.reset(owner_token)
+            request_id_context.reset(trace)
+
+    @app.post("/chat/sessao")
+    def browser_session(request: Request, response: Response):
+        return start_session(request, response, sessions, settings)
+
+    @app.post("/chat/sessao/encerrar", status_code=204)
+    def end_session(response: Response):
+        with sessions.begin() as session:
+            browser = session.get(BrowserSession, owner_context.get())
+            browser.expira_em = now()
+        response.delete_cookie(settings.cookie_name, path="/", secure=settings.cookie_secure, httponly=True, samesite="lax")
 
     @app.exception_handler(OrdersError)
     async def orders_failure(_request: Request, exc: OrdersError):
@@ -72,7 +124,8 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
         return JSONResponse(status_code=503, content={"detail": str(exc), "code": exc.code})
 
     def find_conversation(session, conversation_id, *, lock=False):
-        statement = select(Conversation).where(Conversation.id == str(conversation_id))
+        statement = select(Conversation).join(ConversationAccess, ConversationAccess.conversa_id == Conversation.id).where(
+            Conversation.id == str(conversation_id), ConversationAccess.sessao_hash == owner_context.get())
         if lock:
             statement = statement.with_for_update()
         conversation = session.scalar(statement)
@@ -96,7 +149,13 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
 
     @app.get("/chat/pedidos/{pedido_id}")
     def order(pedido_id: int = Path(gt=0)):
-        return client.order(pedido_id).model_dump(mode="json")
+        with sessions() as session:
+            return OwnedOrdersClient(session, owner_context.get(), client).order(pedido_id).model_dump(mode="json")
+
+    @app.get("/chat/pedidos")
+    def browser_orders():
+        with sessions() as session:
+            return list_browser_orders(session, owner_context.get(), client)
 
     @app.post("/chat/conversas", status_code=201)
     def create_conversation():
@@ -104,6 +163,7 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
             conversation = Conversation()
             session.add(conversation)
             session.flush()
+            session.add(ConversationAccess(conversa_id=conversation.id, sessao_hash=owner_context.get()))
             session.add(Message(conversa_id=conversation.id, papel="assistente", conteudo="Olá! Posso consultar o catálogo real e preparar seu lanche. Você revisa o resumo e confirma a compra pelo botão. Quer ver o cardápio?"))
             session.flush()
             return snapshot(session, conversation)
@@ -137,12 +197,13 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
                 return snapshot(session, conversation)
             if conversation.estado == "confirmando":
                 raise HTTPException(409, "Há uma confirmação pendente. Use Repetir confirmação para recuperar o mesmo pedido antes de alterar a compra.")
+            owned_client = OwnedOrdersClient(session, owner_context.get(), client)
             if settings.ai_provider == "commands":
-                answer = reply(conversation, content, client)
+                answer = reply(conversation, content, owned_client)
             else:
                 history = session.scalars(select(Message).where(Message.conversa_id == conversation.id).order_by(Message.sequencia)).all()
-                answer = respond(conversation, history, content, client, provider, settings.ai_timeout,
-                                 list_orders=lambda: list_conversation_orders(session, conversation.id, client))
+                answer = respond(conversation, history, content, owned_client, provider, settings.ai_timeout,
+                                 list_orders=lambda: list_browser_orders(session, owner_context.get(), client))
             conversation.atualizada_em = now()
             session.add(Message(conversa_id=conversation.id, papel="usuario", conteudo=content))
             session.flush()

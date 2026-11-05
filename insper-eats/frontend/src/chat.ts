@@ -11,23 +11,68 @@ function read(id: string): Conversation {
   try { const raw = localStorage.getItem(key(id)); if (raw) return JSON.parse(raw) } catch { /* handled below */ }
   throw new Error('Conversa não encontrada neste navegador. Inicie uma nova conversa.')
 }
-async function request(path: string, body?: unknown): Promise<Conversation> {
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) { super(message); this.status = status }
+}
+export type OrderSummary = { pedido_id: number | string; status: string; total: number }
+export type OrderHistory = { escopo: string; pedidos: OrderSummary[] }
+let csrf = ''
+let initializing: Promise<void> | null = null
+async function ensureSession() {
+  if (csrf) return
+  if (!initializing) initializing = (async () => {
+    const response = await fetch(`${base}/chat/sessao`, { method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(15000) })
+    const value = await response.json().catch(() => null)
+    if (!response.ok || typeof value?.csrf_token !== 'string') throw new ApiError(response.status, value?.detail || 'Não foi possível iniciar sua sessão. Tente novamente.')
+    csrf = value.csrf_token
+  })().finally(() => { initializing = null })
+  await initializing
+}
+async function apiRequest<T>(path: string, body?: unknown, retried = false): Promise<T> {
   let response: Response
-  try { response = await fetch(`${base}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(150000) }) }
-  catch (error) {
-    if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('O chat excedeu o tempo de espera de 150 segundos. Tente novamente.')
-    throw new Error('O chat não respondeu. Confira a conexão e tente novamente.')
+  try {
+    await ensureSession()
+    response = await fetch(`${base}${path}`, {
+      method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...(body === undefined ? {} : { 'X-CSRF-Token': csrf }) },
+      body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(150000),
+    })
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('O chat excedeu o tempo de espera. Tente novamente.')
+    throw new Error('O serviço não respondeu. Confira a conexão e tente novamente.')
   }
-  if (!response.ok) {
-    const failure = await response.json().catch(() => null)
-    throw new Error(typeof failure?.detail === 'string' ? failure.detail : 'Não foi possível concluir. Tente novamente.')
-  }
-  const c = await response.json()
+  if (response.status === 401 && !retried) { csrf = ''; return apiRequest<T>(path, body, true) }
+  const value = await response.json().catch(() => null)
+  if (!response.ok) throw new ApiError(response.status, typeof value?.detail === 'string' ? value.detail : 'Não foi possível concluir. Tente novamente.')
+  return value as T
+}
+async function request(path: string, body?: unknown): Promise<Conversation> {
+  const c = await apiRequest<Conversation>(path, body)
   if (typeof c?.id !== 'string' || !Array.isArray(c.mensagens) || !('compra' in c)) throw new Error('Resposta incompatível com o chat.')
   return c
 }
+
 const products = [{ nome: 'Brownie', preco_unitario: 8, pattern: /brownie/i }, { nome: 'Cookie', preco_unitario: 6, pattern: /cookie/i }, { nome: 'Pão de queijo', preco_unitario: 5, pattern: /p[aã]o de queijo/i }]
 export const chat = {
+  async orders(): Promise<OrderHistory> {
+    if (!demoMode) {
+      const history = await apiRequest<OrderHistory>('/chat/pedidos')
+      if (!history || !Array.isArray(history.pedidos) || history.pedidos.some(order => !order || typeof order.status !== 'string' || typeof order.total !== 'number')) throw new Error('Não foi possível interpretar a atualização dos pedidos.')
+      return history
+    }
+    const pedidos: OrderSummary[] = []
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index)
+      if (!key?.startsWith('insper-eats:demo:')) continue
+      try {
+        const c = JSON.parse(localStorage.getItem(key) || '{}') as Conversation
+        if (c.compra?.pedido_id) pedidos.push({ pedido_id: c.compra.pedido_id, status: c.compra.pedido_status || 'simulado', total: c.compra.total })
+      } catch { /* Ignore unrelated or invalid local entries. */ }
+    }
+    return { escopo: 'pedidos simulados deste navegador', pedidos }
+  },
   storageKey: `insper-eats:conversation:${demoMode ? 'demo' : base}`,
   async create(): Promise<Conversation> { return demoMode ? save({ id: crypto.randomUUID(), mensagens: [msg('assistente', 'Oi! Que bom te ver por aqui. ✳\nEu te ajudo a escolher seu próximo lanche. Quer dar uma olhada no cardápio?')], compra: null, processadas: [] }) : request('/chat/conversas', {}) },
   async get(id: string) { return demoMode ? read(id) : request(`/chat/conversas/${encodeURIComponent(id)}`) },

@@ -111,8 +111,9 @@ O status do worker pode evoluir; consulte o pedido para ver o status real atuali
 
 ## Persistência e endpoints
 
-Tabelas exclusivas: chat_conversa, chat_mensagem, chat_requisicao, chat_confirmacao.
-A nova tabela é criada automaticamente na inicialização; as tabelas existentes não mudam.
+Tabelas exclusivas: chat_conversa, chat_mensagem, chat_requisicao, chat_confirmacao,
+chat_sessao e chat_acesso_conversa. Tabelas novas são criadas automaticamente sob lock
+PostgreSQL na inicialização; colunas das tabelas existentes não mudam.
 Evoluções futuras de colunas precisarão de migrações.
 
 | Método | Caminho | Função |
@@ -149,8 +150,12 @@ Cobertura inclui concorrência, confirmação explícita, timeout após compra, 
 após reinício com payload idêntico, preço alterado, revisão de versão, rollback da IA,
 ferramentas com catálogo, isolamento e duplicidade de mensagens.
 
-O sistema ainda não possui autenticação por conversa/pedido. Mantenha o serviço local
-até implementar identidade e autorização antes da exposição na AWS.
+Todos os caminhos /chat exigem sessão, exceto POST /chat/sessao, que inicia o cookie
+HttpOnly e retorna csrf_token. Mutações exigem X-CSRF-Token. Conversas e pedidos são
+autorizados pela sessão proprietária. POST /chat/sessao/encerrar revoga a sessão.
+É uma identidade anônima do navegador; login institucional ainda não está implementado.
+Para HTTPS na AWS, configure COOKIE_SECURE=true e APP_ORIGINS com a origem pública.
+Consulte ../docs/IMPLANTACAO.md para rede, segredos e recuperação do histórico antigo.
 
 ## Teste com prazo maior
 
@@ -168,8 +173,8 @@ de 1 e 2 segundos. O tempo de rede e as pausas consomem o mesmo orçamento resta
 As retentativas reutilizam o mesmo pedido de geração, sem reexecutar ferramentas nem criar compras.
 Erros de chave, cota (429) e validação não são repetidos automaticamente.
 
-A ferramenta listar_meus_pedidos e GET /chat/conversas/{id}/pedidos consultam as compras
-confirmadas nesta conversa, recuperando seu status atual via API de pedidos. Uma seleção
-preparada, tentativa incerta ou compra de outra conversa não aparece nessa lista. Não existe
-identidade autenticada para reunir compras feitas em conversas diferentes pelo mesmo usuário.
+A ferramenta listar_meus_pedidos e GET /chat/pedidos consultam compras confirmadas em
+todas as conversas da sessão atual, recuperando status pela API de pedidos.
+GET /chat/conversas/{id}/pedidos mantém a consulta restrita à conversa proprietária.
+Seleções preparadas, tentativas incertas e pedidos de outra sessão não aparecem.
 O endpoint de histórico pode ser consultado diretamente mesmo quando a IA está indisponível.

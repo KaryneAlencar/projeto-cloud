@@ -16,6 +16,10 @@ class Settings:
     ai_timeout: float = 120.0
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    cookie_secure: bool = False
+    session_days: int = 30
+    allowed_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8080", "http://localhost:8080")
+    cookie_name: str = "insper_eats_session"
 
     @property
     def ai_configured(self):
@@ -43,6 +47,13 @@ class Settings:
         ai_timeout = float(os.getenv("AI_TIMEOUT", "120"))
         if not 0 < ai_timeout <= 120:
             raise RuntimeError("AI_TIMEOUT deve ser maior que 0 e no máximo 120 segundos")
+        session_days = int(os.getenv("SESSION_DAYS", "30"))
+        if not 1 <= session_days <= 365:
+            raise RuntimeError("SESSION_DAYS deve estar entre 1 e 365 dias")
         return cls(url, os.getenv("ORDERS_API_URL", "http://127.0.0.1:8000").rstrip("/"), timeout,
                    provider, os.getenv("OPENAI_API_KEY", ""), os.getenv("OPENAI_MODEL", ""),
-                   ai_timeout, os.getenv("GEMINI_API_KEY", ""), os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+                   ai_timeout, os.getenv("GEMINI_API_KEY", ""), os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                   os.getenv("COOKIE_SECURE", "false").lower() == "true",
+                   session_days,
+                   tuple(origin.strip().rstrip("/") for origin in os.getenv("APP_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8080,http://localhost:8080").split(",") if origin.strip()),
+                   os.getenv("SESSION_COOKIE_NAME", "insper_eats_session"))

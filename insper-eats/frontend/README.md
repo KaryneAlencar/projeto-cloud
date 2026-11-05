@@ -29,7 +29,7 @@ O simulador é um roteiro determinístico, não uma IA. Uma nova seleção subst
 Dados e conversas de demonstração ficam no localStorage deste navegador. Uma confirmação
 simulada nunca chama a API de pedidos. Não use dados pessoais reais na demonstração.
 
-## Conectar o futuro Chat Service
+## Conectar o Chat Service
 
 Copie .env.example para .env.local e configure:
 
@@ -43,6 +43,12 @@ removendo o prefixo /api. A API de pedidos existente continua na porta 8000.
 O Chat Service já existe em ../chat-service. Consulte o README dele para executar.
 O modo integrado usa IA e pode criar pedidos REAIS após confirmação pelo botão.
 Configure GEMINI_API_KEY e GEMINI_MODEL (AI_PROVIDER=gemini) no .env do Chat Service. Nunca coloque chaves no frontend.
+
+O painel Meus pedidos reúne compras das conversas da sessão e consulta o status a cada
+10 segundos enquanto a página está visível. O cookie HttpOnly identifica o navegador;
+o cliente inicia a sessão e envia o token CSRF nas alterações automaticamente.
+Histórico antigo sem proprietário exige recuperação administrativa, descrita em
+../docs/IMPLANTACAO.md. Para execução conjunta em containers, consulte ../../README.md.
 Não há fallback silencioso para demonstração em caso de falha da API.
 
 Em produção, configure o ALB/reverse proxy para encaminhar /api ao Chat Service

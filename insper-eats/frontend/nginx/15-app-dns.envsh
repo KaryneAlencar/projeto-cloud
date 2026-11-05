@@ -1,0 +1,3 @@
+#!/bin/sh
+# Usa o DNS do próprio ambiente (Docker ou VPC), sem fixar endereços AWS.
+export DNS_RESOLVER="${DNS_RESOLVER:-$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf)}"

@@ -1,0 +1,44 @@
+# Ambiente isolado de validação. Não usa credenciais, volumes ou filas reais.
+services:
+  db:
+    image: postgres:17
+    environment: {POSTGRES_USER: verify, POSTGRES_PASSWORD: verify-local-only, POSTGRES_DB: verify}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U verify -d verify"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: ["verify_data:/var/lib/postgresql/data"]
+  api:
+    image: insper-eats-api-verify:local
+    build: {context: ./backend, dockerfile: Dockerfile.api}
+    environment: {DATABASE_URL: "postgresql+psycopg://verify:verify-local-only@db:5432/verify"}
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  chat:
+    image: insper-eats-chat-verify:local
+    build: ./chat-service
+    environment:
+      CHAT_DATABASE_URL: postgresql+psycopg://verify:verify-local-only@db:5432/verify
+      ORDERS_API_URL: http://api:8000
+      AI_PROVIDER: commands
+      COOKIE_SECURE: "false"
+      SESSION_COOKIE_NAME: insper_eats_verify_session
+      APP_ORIGINS: http://127.0.0.1:18080,http://localhost:18080
+      WEB_CONCURRENCY: 2
+    depends_on:
+      api: {condition: service_healthy}
+  frontend:
+    image: insper-eats-frontend-verify:local
+    build: ./frontend
+    ports: ["127.0.0.1:18080:8080"]
+    environment: {CHAT_UPSTREAM: "http://chat:8001"}
+    depends_on:
+      chat: {condition: service_healthy}
+volumes:
+  verify_data:

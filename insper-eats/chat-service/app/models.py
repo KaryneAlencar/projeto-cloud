@@ -59,3 +59,17 @@ class CheckoutAttempt(Base):
     resposta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     erro: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     criada_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class BrowserSession(Base):
+    __tablename__ = "chat_sessao"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    criada_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ConversationAccess(Base):
+    __tablename__ = "chat_acesso_conversa"
+    conversa_id: Mapped[str] = mapped_column(ForeignKey("chat_conversa.id"), primary_key=True)
+    sessao_hash: Mapped[str] = mapped_column(ForeignKey("chat_sessao.token_hash"), index=True)

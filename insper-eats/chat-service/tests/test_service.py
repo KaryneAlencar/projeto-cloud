@@ -6,7 +6,7 @@ from decimal import Decimal
 from uuid import uuid4
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient as RawTestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,15 @@ from app.config import Settings
 from app.main import create_app
 from app.models import Base, Conversation, Message
 from app.orders import Order, OrdersClient, OrdersError, Product
+
+
+class TestClient(RawTestClient):
+    def __enter__(self):
+        super().__enter__()
+        response = self.post('/chat/sessao')
+        assert response.status_code == 200, response.text
+        self.headers['X-CSRF-Token'] = response.json()['csrf_token']
+        return self
 
 
 class FakeOrders:
@@ -86,11 +95,83 @@ class ServiceTests(unittest.TestCase):
     def test_health_catalog_and_order(self):
         self.assertEqual(self.client.get("/health").json()["banco"], "ok")
         self.assertEqual(self.client.get("/chat/produtos").json()[0]["id"], 10)
-        self.assertEqual(self.client.get("/chat/pedidos/7").json()["status"], "recebido")
+        self.assertEqual(self.client.get("/chat/pedidos/7").status_code, 404)
         self.assertEqual(self.client.get("/chat/pedidos/999").status_code, 404)
         self.assertEqual(self.client.get("/chat/pedidos/0").status_code, 422)
         result = self.send(self.conversation(), "Ver o cardápio").json()
         self.assertIn("8.10", result["mensagens"][-1]["conteudo"])
+
+    def test_session_and_csrf_are_required(self):
+        app = create_app(Settings(self.url, ai_provider='commands'), engine=self.new_engine(), orders=self.fake)
+        with RawTestClient(app) as anonymous:
+            self.assertEqual(anonymous.get('/chat/pedidos').status_code, 401)
+            self.assertEqual(anonymous.post('/chat/conversas', json={}).status_code, 401)
+            bootstrap = anonymous.post('/chat/sessao')
+            self.assertEqual(bootstrap.status_code, 200)
+            self.assertIn('HttpOnly', bootstrap.headers['set-cookie'])
+            self.assertIn('SameSite=lax', bootstrap.headers['set-cookie'])
+            self.assertEqual(anonymous.post('/chat/conversas', json={}).status_code, 403)
+            anonymous.headers['X-CSRF-Token'] = bootstrap.json()['csrf_token']
+            self.assertEqual(anonymous.post('/chat/conversas', json={}).status_code, 201)
+            self.assertEqual(anonymous.post('/chat/conversas', json={}, headers={'Origin': 'https://untrusted.example'}).status_code, 403)
+            self.assertEqual(anonymous.post('/chat/sessao', headers={'Origin': 'https://untrusted.example'}).status_code, 403)
+
+    def test_other_session_cannot_read_write_confirm_or_query_orders(self):
+        cid, purchase_id = self.prepared()
+        order_id = self.confirm(cid, purchase_id).json()['compra']['pedido_id']
+        self.assertEqual(self.client.get(f'/chat/pedidos/{order_id}').status_code, 200)
+        with TestClient(create_app(Settings(self.url, ai_provider='commands'), engine=self.new_engine(), orders=self.fake)) as stranger:
+            self.assertEqual(stranger.get(f'/chat/conversas/{cid}').status_code, 404)
+            self.assertEqual(stranger.get(f'/chat/conversas/{cid}/pedidos').status_code, 404)
+            self.assertEqual(stranger.get(f'/chat/pedidos/{order_id}').status_code, 404)
+            self.assertEqual(stranger.post(f'/chat/conversas/{cid}/mensagens', json={'conteudo': 'Oi', 'mensagem_id': str(uuid4())}).status_code, 404)
+            self.assertEqual(stranger.post(f'/chat/conversas/{cid}/confirmar', json={'compra_id': purchase_id}).status_code, 404)
+            self.assertEqual(stranger.get('/chat/pedidos').json()['pedidos'], [])
+            foreign_cid = stranger.post('/chat/conversas', json={}).json()['id']
+            response = stranger.post(f'/chat/conversas/{foreign_cid}/mensagens', json={'conteudo': f'Pedido {order_id}', 'mensagem_id': str(uuid4())})
+            self.assertEqual(response.status_code, 404)
+
+    def test_session_orders_include_other_owned_conversations(self):
+        cid, purchase_id = self.prepared()
+        first = self.confirm(cid, purchase_id).json()['compra']['pedido_id']
+        other, other_purchase = self.prepared()
+        second = self.confirm(other, other_purchase).json()['compra']['pedido_id']
+        listed = self.client.get('/chat/pedidos').json()['pedidos']
+        self.assertEqual({str(p['pedido_id']) for p in listed}, {first, second})
+
+    def test_expired_session_cannot_automatically_claim_old_conversation(self):
+        from datetime import timedelta
+        from app.models import BrowserSession, now
+        cid = self.conversation()
+        reference = self.client.post('/chat/sessao').json()['session_reference']
+        with Session(self.engine) as session:
+            browser = session.get(BrowserSession, reference)
+            browser.expira_em = now() - timedelta(seconds=1)
+            session.commit()
+        self.assertEqual(self.client.get(f'/chat/conversas/{cid}').status_code, 401)
+        bootstrap = self.client.post('/chat/sessao').json()
+        self.client.headers['X-CSRF-Token'] = bootstrap['csrf_token']
+        self.assertNotEqual(bootstrap['session_reference'], reference)
+        self.assertEqual(self.client.get(f'/chat/conversas/{cid}').status_code, 404)
+
+    def test_legacy_conversations_stay_preserved_and_unclaimed(self):
+        with Session(self.engine) as session:
+            old = Conversation()
+            session.add(old)
+            session.commit()
+            cid = old.id
+        self.assertEqual(self.client.get(f'/chat/conversas/{cid}').status_code, 404)
+        with Session(self.engine) as session:
+            self.assertIsNotNone(session.get(Conversation, cid))
+
+    def test_logout_revokes_access_and_request_id_is_returned(self):
+        cid = self.conversation()
+        trace = str(uuid4())
+        response = self.client.get(f'/chat/conversas/{cid}', headers={'X-Request-ID': trace})
+        self.assertEqual(response.headers['x-request-id'], trace)
+        self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.assertEqual(self.client.post('/chat/sessao/encerrar').status_code, 204)
+        self.assertEqual(self.client.get(f'/chat/conversas/{cid}').status_code, 401)
 
     def test_old_history_is_cleaned_only_for_assistant_messages(self):
         cid = self.conversation()
@@ -112,7 +193,7 @@ class ServiceTests(unittest.TestCase):
         with Session(self.engine) as session:
             stored = session.get(Conversation, cid)
             self.assertEqual(stored.chave_idempotencia, result["compra"]["id"])
-        restarted = TestClient(create_app(Settings(self.url, ai_provider="commands"), engine=self.new_engine(), orders=self.fake))
+        restarted = TestClient(create_app(Settings(self.url, ai_provider="commands"), engine=self.new_engine(), orders=self.fake), cookies=self.client.cookies)
         with restarted:
             restored = restarted.get(f"/chat/conversas/{cid}").json()
         self.assertEqual(restored, result)
@@ -172,7 +253,7 @@ class ServiceTests(unittest.TestCase):
                 result = json.loads(items[-1]['output'])
                 self.assertEqual(str(result['pedidos'][0]['pedido_id']), order_id)
                 return [{'type': 'message', 'content': [{'type': 'output_text', 'text': f'Pedido #{order_id}: recebido.'}]}]
-        with TestClient(create_app(Settings(self.url), engine=self.new_engine(), orders=self.fake, ai=HistoryAI())) as client:
+        with TestClient(create_app(Settings(self.url), engine=self.new_engine(), orders=self.fake, ai=HistoryAI()), cookies=self.client.cookies) as client:
             result = client.post(f'/chat/conversas/{cid}/mensagens', json={'conteudo': 'Liste meus pedidos', 'mensagem_id': str(uuid4())})
         self.assertEqual(result.status_code, 200)
         self.assertIn(f'#{order_id}', result.json()['mensagens'][-1]['conteudo'])
@@ -186,7 +267,7 @@ class ServiceTests(unittest.TestCase):
         pending = self.client.get(f"/chat/conversas/{cid}").json()
         self.assertEqual(pending["compra"]["status"], "confirmando")
         self.assertEqual(self.send(cid, "cancelar").status_code, 409)
-        restarted = TestClient(create_app(Settings(self.url, ai_provider="commands"), engine=self.new_engine(), orders=self.fake))
+        restarted = TestClient(create_app(Settings(self.url, ai_provider="commands"), engine=self.new_engine(), orders=self.fake), cookies=self.client.cookies)
         with restarted:
             result = restarted.post(f"/chat/conversas/{cid}/confirmar", json={"compra_id": purchase_id})
         self.assertEqual(result.status_code, 200)
@@ -310,7 +391,7 @@ class ServiceTests(unittest.TestCase):
         ]
         settings = Settings(self.url, ai_provider="gemini", gemini_api_key="test-key")
         with patch("app.gemini.urlopen", side_effect=responses) as transport:
-            with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake)) as client:
+            with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake), cookies=self.client.cookies) as client:
                 cid = client.post('/chat/conversas', json={}).json()['id']
                 result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Quero dois brownies para Ana, sala 512", "mensagem_id": str(uuid4())})
                 self.assertEqual(result.status_code, 200)
