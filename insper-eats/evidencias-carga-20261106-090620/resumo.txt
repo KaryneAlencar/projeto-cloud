@@ -1,0 +1,13 @@
+=== RUBRICA 5 - RESULTADO ===
+Execucao: 964482101e
+Janela: 2026-11-06T12:06:41.226244+00:00 a 2026-11-06T12:13:27.543560+00:00
+Parada antecipada: False
+baseline: HTTP200=60/60, sucesso=100.0%, RPS=2.0, p95=0.4329s, cache_hits=0
+moderada: HTTP200=1080/1080, sucesso=100.0%, RPS=12.0, p95=0.4446s, cache_hits=0
+pico: HTTP200=8544/8544, sucesso=100.0%, RPS=35.6, p95=0.5099s, cache_hits=0
+recuperacao: HTTP200=89/90, sucesso=98.89%, RPS=2.0, p95=0.4918s, cache_hits=0
+Saude / e /api/health: 132/132 HTTP 200
+API DesiredCount observado: 2
+CPU maxima CloudWatch publicada: 26.50%
+Evidencias em: C:\Users\karyn\OneDrive\Documentos\Insper\2026.2\Cloud\projeto-cloud\insper-eats\evidencias-carga-20261106-090620
+Somente GET; nenhum pedido foi criado e nenhum recurso AWS foi modificado.

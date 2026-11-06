@@ -16,8 +16,39 @@ from models import (
     EventoOutbox
 )
 
+import os
+from hmac import compare_digest
+from fastapi import Header
 
-router = APIRouter(prefix="/pedidos", tags=["Pedidos"])
+
+def exigir_credencial_interna(
+    x_internal_token: str | None = Header(
+        default=None,
+        alias="X-Internal-Token"
+    )
+):
+    token_esperado = os.getenv("ORDERS_INTERNAL_TOKEN")
+
+    if not token_esperado:
+        raise HTTPException(
+            status_code=503,
+            detail="Autenticacao interna nao configurada"
+        )
+
+    if not x_internal_token or not compare_digest(
+        x_internal_token, token_esperado
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Acesso nao autorizado"
+        )
+
+
+router = APIRouter(
+    prefix="/pedidos",
+    tags=["Pedidos"],
+    dependencies=[Depends(exigir_credencial_interna)]
+)
 
 
 def detalhes_pedido(session: Session, pedido: Pedido):

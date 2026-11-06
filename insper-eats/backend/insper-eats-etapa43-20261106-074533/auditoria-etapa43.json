@@ -1,0 +1,119 @@
+﻿{
+    "projeto":  "Insper Eats",
+    "etapa":  43,
+    "gerado_em":  "2026-11-06 07:45:33 -03:00",
+    "regiao":  "us-east-2",
+    "endereco_publico":  "https://d39sc491o1jam0.cloudfront.net",
+    "revisao_web_esperada":  "insper-eats-web:4",
+    "checagens":  [
+                      {
+                          "Verificacao":  "Conta e regiao",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Conta correta; us-east-2"
+                      },
+                      {
+                          "Verificacao":  "insper-eats-api-service",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Rodando 2/2; pending 0"
+                      },
+                      {
+                          "Verificacao":  "insper-eats-worker-service",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Rodando 2/2; pending 0"
+                      },
+                      {
+                          "Verificacao":  "insper-eats-web-service",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Rodando 2/2; pending 0"
+                      },
+                      {
+                          "Verificacao":  "Auto Scaling Group EC2",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Desejadas 4; saudaveis 4; min 0; max 4"
+                      },
+                      {
+                          "Verificacao":  "Frontend HTTPS",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Pagina acessivel pelo CloudFront"
+                      },
+                      {
+                          "Verificacao":  "API FastAPI",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Health: ok"
+                      },
+                      {
+                          "Verificacao":  "Chat, banco e configuracao IA",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Chat: ok; banco: ok; IA configurada: True"
+                      },
+                      {
+                          "Verificacao":  "Sessao HTTPS e cookie seguro",
+                          "Resultado":  "OK",
+                          "Detalhes":  "HTTP 200, CSRF presente e atributos Secure/HttpOnly/SameSite=Lax"
+                      },
+                      {
+                          "Verificacao":  "CloudFront ativo e redirecionamento HTTPS",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Status: Deployed; ViewerProtocolPolicy: redirect-to-https"
+                      },
+                      {
+                          "Verificacao":  "Criptografia CloudFront ate ALB",
+                          "Resultado":  "ATENCAO",
+                          "Detalhes":  "Pendente para producao: origem utiliza HTTP"
+                      },
+                      {
+                          "Verificacao":  "ALB restrito a redes CloudFront",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Regras CloudFront: 1; regras publicas: 0"
+                      },
+                      {
+                          "Verificacao":  "SQS e DLQ",
+                          "Resultado":  "OK",
+                          "Detalhes":  "maxReceiveCount: 5; mensagens historicas na DLQ (aproximadas): 3"
+                      },
+                      {
+                          "Verificacao":  "RDS PostgreSQL privado",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Estado: available; publico: False; criptografia armazenamento: True"
+                      },
+                      {
+                          "Verificacao":  "Logs /ecs/insper-eats/api",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Retencao: 30 dias"
+                      },
+                      {
+                          "Verificacao":  "Logs /ecs/insper-eats/worker",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Retencao: 30 dias"
+                      },
+                      {
+                          "Verificacao":  "Logs /ecs/insper-eats/chat",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Retencao: 30 dias"
+                      },
+                      {
+                          "Verificacao":  "Logs /ecs/insper-eats/frontend",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Retencao: 30 dias"
+                      },
+                      {
+                          "Verificacao":  "Alarme insper-eats-web-healthy-hosts",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Estado: OK; notificacao SNS: True"
+                      },
+                      {
+                          "Verificacao":  "Alarme insper-eats-web-target-5xx",
+                          "Resultado":  "OK",
+                          "Detalhes":  "Estado: OK; notificacao SNS: True"
+                      }
+                  ],
+    "observacoes":  [
+                        "Escopo: auditoria automatizada de infraestrutura; somente leitura. Nenhum pedido, recurso ou regra foi alterado.",
+                        "Etapa 42: pedido 7 confirmado; estoque 2 -\u003e 1; CSRF, sessoes, idempotencia e worker validados.",
+                        "Ressalva: origem CloudFront -\u003e ALB ainda usa HTTP (sem criptografia desse trecho).",
+                        "Ressalva: endpoints publicos de pedidos requerem autenticacao/autorizacao antes de uso real.",
+                        "O prefixo CloudFront filtra IPs de origem, mas nao restringe exclusivamente a nossa distribuicao.",
+                        "Este relatorio comprova configuracao/saude no momento do teste; nao comprova teste de carga ou failover.",
+                        "DLQ com mensagens de testes anteriores: nao apagadas."
+                    ]
+}

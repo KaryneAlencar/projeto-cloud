@@ -1,0 +1,32 @@
+﻿=== 1. VALIDANDO AMBIENTE ===
+Servico web: 2/2
+ALB healthy: 2/2
+
+=== 2. TESTANDO CLOUDFRONT ===
+/ : HTTP 200
+/api/health : HTTP 200
+
+=== 3. INTERROMPENDO UMA TASK WEB ===
+Task selecionada: 0d6ffe40b81647a38ac55bd5e7fc8b49
+Interrupcao solicitada com sucesso.
+
+=== 4. MONITORANDO DISPONIBILIDADE E RECUPERACAO ===
+Rodada 1 | ECS 1/2 | Pending 0 | ALB healthy 2 | Falhas HTTP 0
+Rodada 2 | ECS 1/2 | Pending 0 | ALB healthy 2 | Falhas HTTP 0
+Rodada 3 | ECS 1/2 | Pending 0 | ALB healthy 2 | Falhas HTTP 0
+Rodada 4 | ECS 1/2 | Pending 0 | ALB healthy 1 | Falhas HTTP 0
+Rodada 5 | ECS 1/2 | Pending 1 | ALB healthy 1 | Falhas HTTP 0
+Rodada 6 | ECS 1/2 | Pending 1 | ALB healthy 1 | Falhas HTTP 0
+Rodada 7 | ECS 1/2 | Pending 1 | ALB healthy 1 | Falhas HTTP 0
+Rodada 8 | ECS 2/2 | Pending 0 | ALB healthy 2 | Falhas HTTP 0
+
+=== 5. RESULTADO FINAL ===
+Task antiga: 0d6ffe40b81647a38ac55bd5e7fc8b49
+Task substituta: 4a198bfddea04130ae166c4c321a5381
+Amostras HTTP: 16
+Falhas HTTP: 0
+Capacidade recuperada: True
+ECS recuperou 2/2 tasks e ALB 2/2 healthy.
+Nenhuma indisponibilidade observada nas amostras HTTP.
+
+=== 6. SALVANDO EVIDENCIAS ===

@@ -1,0 +1,33 @@
+﻿INSPER EATS - ETAPA 43
+Data: 2026-11-06 07:45:33
+URL: https://d39sc491o1jam0.cloudfront.net
+
+[OK] Conta e regiao - Conta correta; us-east-2
+[OK] insper-eats-api-service - Rodando 2/2; pending 0
+[OK] insper-eats-worker-service - Rodando 2/2; pending 0
+[OK] insper-eats-web-service - Rodando 2/2; pending 0
+[OK] Auto Scaling Group EC2 - Desejadas 4; saudaveis 4; min 0; max 4
+[OK] Frontend HTTPS - Pagina acessivel pelo CloudFront
+[OK] API FastAPI - Health: ok
+[OK] Chat, banco e configuracao IA - Chat: ok; banco: ok; IA configurada: True
+[OK] Sessao HTTPS e cookie seguro - HTTP 200, CSRF presente e atributos Secure/HttpOnly/SameSite=Lax
+[OK] CloudFront ativo e redirecionamento HTTPS - Status: Deployed; ViewerProtocolPolicy: redirect-to-https
+[ATENCAO] Criptografia CloudFront ate ALB - Pendente para producao: origem utiliza HTTP
+[OK] ALB restrito a redes CloudFront - Regras CloudFront: 1; regras publicas: 0
+[OK] SQS e DLQ - maxReceiveCount: 5; mensagens historicas na DLQ (aproximadas): 3
+[OK] RDS PostgreSQL privado - Estado: available; publico: False; criptografia armazenamento: True
+[OK] Logs /ecs/insper-eats/api - Retencao: 30 dias
+[OK] Logs /ecs/insper-eats/worker - Retencao: 30 dias
+[OK] Logs /ecs/insper-eats/chat - Retencao: 30 dias
+[OK] Logs /ecs/insper-eats/frontend - Retencao: 30 dias
+[OK] Alarme insper-eats-web-healthy-hosts - Estado: OK; notificacao SNS: True
+[OK] Alarme insper-eats-web-target-5xx - Estado: OK; notificacao SNS: True
+
+LIMITACOES E OBSERVACOES
+Escopo: auditoria automatizada de infraestrutura; somente leitura. Nenhum pedido, recurso ou regra foi alterado.
+Etapa 42: pedido 7 confirmado; estoque 2 -> 1; CSRF, sessoes, idempotencia e worker validados.
+Ressalva: origem CloudFront -> ALB ainda usa HTTP (sem criptografia desse trecho).
+Ressalva: endpoints publicos de pedidos requerem autenticacao/autorizacao antes de uso real.
+O prefixo CloudFront filtra IPs de origem, mas nao restringe exclusivamente a nossa distribuicao.
+Este relatorio comprova configuracao/saude no momento do teste; nao comprova teste de carga ou failover.
+DLQ com mensagens de testes anteriores: nao apagadas.

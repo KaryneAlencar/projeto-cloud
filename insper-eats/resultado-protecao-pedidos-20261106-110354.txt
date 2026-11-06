@@ -1,0 +1,14 @@
+﻿INSPER EATS - PROTECAO DE PEDIDOS
+UTC: 2026-11-06 14:26:54Z
+Anterior Web: arn:aws:ecs:us-east-2:667181422998:task-definition/insper-eats-web:4
+Nova Web: arn:aws:ecs:us-east-2:667181422998:task-definition/insper-eats-web:5
+Anterior API: arn:aws:ecs:us-east-2:667181422998:task-definition/insper-eats-api:2
+Nova API: arn:aws:ecs:us-east-2:667181422998:task-definition/insper-eats-api:3
+Imagem Web: 667181422998.dkr.ecr.us-east-2.amazonaws.com/insper-eats-chat:seguro-20261106-110354
+Imagem API: 667181422998.dkr.ecr.us-east-2.amazonaws.com/insper-eats-api:seguro-20261106-110354
+Chat -> API: http://api.insper-eats.internal:8000 (rede privada)
+Secret: arn:aws:secretsmanager:us-east-2:667181422998:secret:insper-eats/orders-internal-token-9d7AaB (somente ARN)
+/api/health = 200
+/produtos = 200
+/pedidos/7 sem sessao = 401
+PENDENTE: teste de compra real pelo navegador com sessao autorizada

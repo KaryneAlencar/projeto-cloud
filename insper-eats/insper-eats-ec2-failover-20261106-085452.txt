@@ -1,0 +1,35 @@
+﻿2026-11-06 08:54:52 | === 1. PREFLIGHT - account, ASG and Capacity Provider ===
+2026-11-06 08:54:56 | Preflight OK: AWS account 667181422998; ASG 4/4; draining ENABLED; termination protection ENABLED
+2026-11-06 08:54:56 | === 2. PREFLIGHT - ECS services, ALB and task placement ===
+2026-11-06 08:54:57 | Service OK: insper-eats-api-service, running=2, desired=2
+2026-11-06 08:54:57 | Service OK: insper-eats-worker-service, running=2, desired=2
+2026-11-06 08:54:57 | Service OK: insper-eats-web-service, running=2, desired=2
+2026-11-06 08:55:04 | Host i-0c111aec2eeec271c: ECS status=ACTIVE; tasks=2; groups=service:insper-eats-api-service,service:insper-eats-worker-service
+2026-11-06 08:55:04 | Host i-08f79c661911fb511: ECS status=ACTIVE; tasks=1; groups=service:insper-eats-web-service
+2026-11-06 08:55:04 | Host i-0fd1c2a18edb64d50: ECS status=ACTIVE; tasks=1; groups=service:insper-eats-web-service
+2026-11-06 08:55:04 | Host i-035405a1c93a35797: ECS status=ACTIVE; tasks=2; groups=service:insper-eats-worker-service,service:insper-eats-api-service
+2026-11-06 08:55:04 | Selected web-only EC2 host: i-08f79c661911fb511
+2026-11-06 08:55:05 | CloudFront endpoints / and /api/health: HTTP 200 preflight.
+2026-11-06 08:55:05 | === 3. MANUAL CONFIRMATION ===
+2026-11-06 08:56:10 | === 4. INDUCING ASG HEALTH-BASED INSTANCE REPLACEMENT ===
+2026-11-06 08:56:11 | ASG instance marked Unhealthy: i-08f79c661911fb511
+2026-11-06 08:56:11 | ASG + ECS managed draining will handle EC2 replacement and rescheduling.
+2026-11-06 08:56:11 | === 5. MONITORING WEB AVAILABILITY AND REPLACEMENT ===
+2026-11-06 08:56:16 | Round 1: ASG Healthy=3/4; ECS API=2/2 Worker=2/2 Web=2/2; WebALB=2/2; newEC2=; HTTPfail=0/2
+2026-11-06 08:56:30 | Round 2: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=2/2; WebALB=2/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/4
+2026-11-06 08:56:45 | Round 3: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=2/2; WebALB=2/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/6
+2026-11-06 08:56:59 | Round 4: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=1/2; WebALB=2/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/8
+2026-11-06 08:57:13 | Round 5: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=1/2; WebALB=1/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/10
+2026-11-06 08:57:28 | Round 6: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=1/2; WebALB=1/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/12
+2026-11-06 08:57:42 | Round 7: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=1/2; WebALB=1/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/14
+2026-11-06 08:57:57 | Round 8: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=1/2; WebALB=2/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/16
+2026-11-06 08:58:11 | Round 9: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=2/2; WebALB=2/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/18
+2026-11-06 08:58:26 | Round 10: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=2/2; WebALB=2/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/20
+2026-11-06 08:58:40 | Round 11: ASG Healthy=4/4; ECS API=2/2 Worker=2/2 Web=2/2; WebALB=2/2; newEC2=i-0c66944a630d038e5; HTTPfail=0/22
+2026-11-06 08:58:41 | === 6. TEST RESULT ===
+2026-11-06 08:58:41 | Old EC2: i-08f79c661911fb511
+2026-11-06 08:58:41 | New EC2: i-0c66944a630d038e5
+2026-11-06 08:58:41 | CloudFront HTTP successes: 22/22
+2026-11-06 08:58:41 | CloudFront HTTP failures: 0
+2026-11-06 08:58:41 | ASG capacity recovered, ECS 2/2 for all services, ALB web 2/2: True
+2026-11-06 08:58:41 | EC2 recovery demonstrated; no HTTP errors observed in sampled probes.

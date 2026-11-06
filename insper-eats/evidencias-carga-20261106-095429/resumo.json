@@ -1,0 +1,291 @@
+{
+  "run_id": "1466b759fb",
+  "start_utc": "2026-11-06T12:54:59.003556+00:00",
+  "end_utc": "2026-11-06T13:01:45.210067+00:00",
+  "configured_phases": [
+    [
+      "baseline",
+      30,
+      2
+    ],
+    [
+      "moderada",
+      90,
+      12
+    ],
+    [
+      "pico",
+      240,
+      36
+    ],
+    [
+      "recuperacao",
+      45,
+      2
+    ]
+  ],
+  "stopped_early": false,
+  "phases": [
+    {
+      "phase": "baseline",
+      "requests": 60,
+      "successes": 60,
+      "failures": 0,
+      "success_pct": 100.0,
+      "measured_rps": 2.0,
+      "p50_s": 0.5056,
+      "p95_s": 0.6903,
+      "p99_s": 0.7674,
+      "max_s": 0.846,
+      "cloudfront_cache_hits": 0,
+      "http_statuses": {
+        "200": 60
+      }
+    },
+    {
+      "phase": "moderada",
+      "requests": 1080,
+      "successes": 1080,
+      "failures": 0,
+      "success_pct": 100.0,
+      "measured_rps": 12.0,
+      "p50_s": 0.4083,
+      "p95_s": 0.45,
+      "p99_s": 0.5056,
+      "max_s": 1.4146,
+      "cloudfront_cache_hits": 0,
+      "http_statuses": {
+        "200": 1080
+      }
+    },
+    {
+      "phase": "pico",
+      "requests": 8590,
+      "successes": 8582,
+      "failures": 8,
+      "success_pct": 99.91,
+      "measured_rps": 35.79,
+      "p50_s": 0.3988,
+      "p95_s": 0.4519,
+      "p99_s": 0.6166,
+      "max_s": 2.0741,
+      "cloudfront_cache_hits": 0,
+      "http_statuses": {
+        "200": 8582,
+        "0": 8
+      }
+    },
+    {
+      "phase": "recuperacao",
+      "requests": 90,
+      "successes": 90,
+      "failures": 0,
+      "success_pct": 100.0,
+      "measured_rps": 2.0,
+      "p50_s": 0.4925,
+      "p95_s": 0.5935,
+      "p99_s": 0.6556,
+      "max_s": 0.9213,
+      "cloudfront_cache_hits": 0,
+      "http_statuses": {
+        "200": 90
+      }
+    }
+  ],
+  "health_checks": 130,
+  "health_ok": 130,
+  "health_failures": 0,
+  "ecs_samples": [
+    {
+      "timestamp_utc": "2026-11-06T12:55:04.131670+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:55:28.029859+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:55:53.616977+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:56:18.345648+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:56:43.393302+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:57:08.553501+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:57:33.421257+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:57:58.801730+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:58:23.844729+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:58:49.226619+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:59:14.296365+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T12:59:39.482292+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T13:00:04.349991+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T13:00:29.595282+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T13:00:54.916338+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T13:01:20.057503+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    },
+    {
+      "timestamp_utc": "2026-11-06T13:01:45.209201+00:00",
+      "api_running": 2,
+      "api_desired": 2,
+      "api_pending": 0,
+      "asg_healthy": 4,
+      "asg_desired": 4
+    }
+  ],
+  "cloudwatch_cpu": [
+    {
+      "Timestamp": "2026-11-06T09:53:00-03:00",
+      "Average": 0.657321052096392,
+      "Maximum": 0.6720192338290968,
+      "Unit": "Percent"
+    },
+    {
+      "Timestamp": "2026-11-06T09:54:00-03:00",
+      "Average": 0.8728688523173332,
+      "Maximum": 1.2193452090024948,
+      "Unit": "Percent"
+    },
+    {
+      "Timestamp": "2026-11-06T09:55:00-03:00",
+      "Average": 3.485229389317203,
+      "Maximum": 8.512497001886368,
+      "Unit": "Percent"
+    },
+    {
+      "Timestamp": "2026-11-06T09:56:00-03:00",
+      "Average": 9.827194966349685,
+      "Maximum": 10.404695606231689,
+      "Unit": "Percent"
+    },
+    {
+      "Timestamp": "2026-11-06T09:57:00-03:00",
+      "Average": 22.397482610794533,
+      "Maximum": 28.389877033233642,
+      "Unit": "Percent"
+    },
+    {
+      "Timestamp": "2026-11-06T09:58:00-03:00",
+      "Average": 27.50689896198741,
+      "Maximum": 29.544708442687988,
+      "Unit": "Percent"
+    },
+    {
+      "Timestamp": "2026-11-06T09:59:00-03:00",
+      "Average": 27.21352305809657,
+      "Maximum": 28.761787223815922,
+      "Unit": "Percent"
+    },
+    {
+      "Timestamp": "2026-11-06T10:00:00-03:00",
+      "Average": 27.85764213110271,
+      "Maximum": 29.901350322522614,
+      "Unit": "Percent"
+    }
+  ],
+  "notes": [
+    "CloudFront cache hits do not prove origin/API load.",
+    "CloudWatch data may be delayed, so missing CPU points do not mean zero CPU.",
+    "No EC2 scale-out can be shown if ASG maximum is already reached."
+  ]
+}
