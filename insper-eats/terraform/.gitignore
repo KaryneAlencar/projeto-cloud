@@ -1,0 +1,15 @@
+# Diretórios e arquivos locais do Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+
+# Configuração local: pode conter IP, e-mail e nome de bucket
+terraform.tfvars
+*.auto.tfvars
+backend.hcl
+
+# Evidências geradas pelos scripts de verificação
+evidencias/

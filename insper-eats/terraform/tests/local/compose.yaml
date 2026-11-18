@@ -1,0 +1,106 @@
+# Ensaio local do que o Terraform implanta, sem AWS e sem custo: as mesmas
+# quatro imagens, o mesmo files/db_init.py e as mesmas variáveis de ambiente
+# das task definitions. PostgreSQL faz o papel do RDS; ElasticMQ, o do SQS.
+#
+#   docker compose -f tests/local/compose.yaml up -d --build --wait
+#   ORDERS_INTERNAL_TOKEN=token-local-only python3 scripts/verify_deploy.py \
+#     --skip-aws --app-url http://127.0.0.1:18081 --api-url http://127.0.0.1:18001
+#   docker compose -f tests/local/compose.yaml down -v
+#
+# As credenciais abaixo só existem neste ambiente descartável.
+name: insper-eats-tfcheck
+
+x-database-urls:
+  app: &app_url postgresql+psycopg://insper_app:AppLocalOnly123@db:5432/insper_eats?sslmode=disable
+  chat: &chat_url postgresql+psycopg://insper_chat:ChatLocalOnly456@db:5432/insper_eats_chat?sslmode=disable
+
+services:
+  db:
+    image: postgres:17
+    environment: {POSTGRES_USER: insper_admin, POSTGRES_PASSWORD: master-local-only, POSTGRES_DB: insper_eats}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insper_admin -d insper_eats"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  sqs:
+    image: softwaremill/elasticmq-native:latest
+    volumes: ["./elasticmq.conf:/opt/elasticmq.conf:ro"]
+
+  # Equivale à task db-init (db_init.tf): roda uma vez, antes dos serviços.
+  db-init:
+    image: insper-eats-tfcheck-api:local
+    build: {context: ../../../backend, dockerfile: Dockerfile.api}
+    command: ["python", "-c", "exec(open('/db_init.py').read())"]
+    volumes: ["../../files/db_init.py:/db_init.py:ro"]
+    environment:
+      DB_HOST: db
+      DB_NAME: insper_eats
+      DB_PORT: "5432"
+      DB_SSLMODE: disable
+      MASTER_USERNAME: insper_admin
+      MASTER_PASSWORD: master-local-only
+      DATABASE_URL: *app_url
+      CHAT_DATABASE_URL: *chat_url
+      SEED_PRODUCTS: '[{"nome": "Brownie", "preco": "8.00", "estoque": 40}, {"nome": "Cafe coado", "preco": "5.00", "estoque": 80}]'
+    depends_on:
+      db: {condition: service_healthy}
+
+  api:
+    image: insper-eats-tfcheck-api:local
+    environment:
+      DATABASE_URL: *app_url
+      ORDERS_INTERNAL_TOKEN: token-local-only
+    ports: ["127.0.0.1:18001:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      db-init: {condition: service_completed_successfully}
+
+  worker:
+    image: insper-eats-tfcheck-worker:local
+    build: {context: ../../../backend, dockerfile: Dockerfile.worker}
+    environment:
+      DATABASE_URL: *app_url
+      AWS_REGION: sa-east-1
+      SQS_QUEUE_NAME: insper-eats-local-orders
+      AWS_ENDPOINT_URL: http://sqs:9324
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+    depends_on:
+      db-init: {condition: service_completed_successfully}
+      sqs: {condition: service_started}
+
+  chat:
+    image: insper-eats-tfcheck-chat:local
+    build: ../../../chat-service
+    environment:
+      PORT: "8001"
+      WEB_CONCURRENCY: "2"
+      CHAT_DATABASE_URL: *chat_url
+      ORDERS_API_URL: http://api:8000
+      ORDERS_INTERNAL_TOKEN: token-local-only
+      AI_PROVIDER: commands
+      GEMINI_MODEL: gemini-2.5-flash
+      GEMINI_API_KEY: chave-nao-configurada
+      APP_ORIGINS: http://127.0.0.1:18081
+      COOKIE_SECURE: "false"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      api: {condition: service_healthy}
+
+  frontend:
+    image: insper-eats-tfcheck-frontend:local
+    build: ../../../frontend
+    environment: {CHAT_UPSTREAM: "http://chat:8001"}
+    ports: ["127.0.0.1:18081:8080"]
+    depends_on:
+      chat: {condition: service_healthy}

@@ -1,0 +1,7 @@
+# Copie para backend.hcl e ajuste, ou gere a partir do bootstrap:
+#   (cd bootstrap && terraform output -raw backend_config) > backend.hcl
+bucket       = "insper-eats-tfstate-<ID-DA-CONTA>-sa-east-1"
+key          = "insper-eats/sp/terraform.tfstate"
+region       = "sa-east-1"
+encrypt      = true
+use_lockfile = true

@@ -1,0 +1,34 @@
+# Copie para terraform.tfvars e ajuste. Todos os valores têm padrão; este
+# arquivo mostra os que normalmente mudam.
+
+region      = "sa-east-1"
+environment = "sp"
+
+# Perfil da AWS CLI (aws configure sso). Remova a linha para usar as
+# credenciais do ambiente.
+# aws_profile = "insper-eats"
+
+# Trava: o apply só roda nesta conta.
+# allowed_account_ids = ["<ID-DA-CONTA>"]
+
+# Seu IP público, para alcançar a API de pedidos em http://<alb>:8000 durante
+# os testes (curl -s https://checkip.amazonaws.com). Sem isso a API não tem
+# rota pública e scripts/verify_deploy.py pula os testes que dependem dela.
+api_allowed_cidrs = ["203.0.113.10/32"]
+
+# E-mail que recebe os alarmes (a AWS envia um link de confirmação).
+# alert_email = "voce@exemplo.com"
+
+# IA do chat. "gemini" exige a chave, passada fora deste arquivo:
+#   export TF_VAR_gemini_api_key="..."
+# "commands" responde por comandos fixos e serve para validar a implantação
+# sem chave (é o modo que scripts/verify_deploy.py usa no teste de compra).
+ai_provider = "gemini"
+
+# HTTPS (opcional): certificado ACM já emitido na mesma região e o domínio.
+# acm_certificate_arn = "arn:aws:acm:sa-east-1:<conta>:certificate/<id>"
+# app_domain          = "eats.exemplo.com"
+
+# Redução de custo para testes curtos (o ambiente validado usa os padrões).
+# db_multi_az        = false
+# single_nat_gateway = true
