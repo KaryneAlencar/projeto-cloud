@@ -338,9 +338,21 @@ variable "gemini_api_key_version" {
 }
 
 variable "gemini_model" {
-  description = "Modelo Gemini usado pelo chat."
+  description = "Modelo Gemini principal do chat. Os modelos \"lite\" foram os que responderam com estabilidade no dia do deploy."
   type        = string
-  default     = "gemini-3.8-flash"
+  default     = "gemini-flash-lite-latest"
+}
+
+variable "gemini_fallback_models" {
+  description = "Modelos reserva, tentados em ordem quando o principal está indisponível (503, 429, timeout). Lista vazia desliga as reservas."
+  type        = list(string)
+  default     = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+}
+
+variable "ai_fallback_commands" {
+  description = "Com todos os modelos fora, o chat responde pelo roteiro básico (com aviso) em vez de devolver erro."
+  type        = bool
+  default     = true
 }
 
 # ---------------------------------------------------------------------------

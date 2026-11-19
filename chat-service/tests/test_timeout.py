@@ -17,12 +17,32 @@ class TimeoutTests(unittest.TestCase):
                 Settings.from_env()
 
     def test_unknown_provider_is_rejected_with_clear_message(self):
-        self.assertEqual(Settings("unused").gemini_model, "gemini-3.8-flash")
+        self.assertEqual(Settings("unused").gemini_model, "gemini-flash-lite-latest")
         for provider in ("openai", "outro"):
             env = {"CHAT_DATABASE_URL": "postgresql+psycopg://unused", "AI_PROVIDER": provider}
             with patch.dict(os.environ, env, clear=True), patch("app.config.load_dotenv"):
                 with self.assertRaisesRegex(RuntimeError, "AI_PROVIDER deve ser gemini ou commands"):
                     Settings.from_env()
+
+    def test_model_chain_and_script_fallback_configuration(self):
+        defaults = Settings("unused")
+        self.assertEqual(defaults.gemini_models, ("gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.8-flash"))
+        self.assertTrue(defaults.ai_fallback_commands)
+        base = {"CHAT_DATABASE_URL": "postgresql+psycopg://unused"}
+        with patch.dict(os.environ, base, clear=True), patch("app.config.load_dotenv"):
+            self.assertEqual(Settings.from_env().gemini_models, defaults.gemini_models)
+            self.assertTrue(Settings.from_env().ai_fallback_commands)
+            # Repetidos e o prefixo models/ não geram tentativas duplicadas.
+            os.environ.update(GEMINI_MODEL="models/a", GEMINI_FALLBACK_MODELS=" b , a,, c ", AI_FALLBACK_COMMANDS="False")
+            settings = Settings.from_env()
+            self.assertEqual(settings.gemini_models, ("a", "b", "c"))
+            self.assertFalse(settings.ai_fallback_commands)
+            # Vazio = sem reservas, só o principal.
+            os.environ["GEMINI_FALLBACK_MODELS"] = ""
+            self.assertEqual(Settings.from_env().gemini_models, ("a",))
+            os.environ["AI_FALLBACK_COMMANDS"] = "talvez"
+            with self.assertRaisesRegex(RuntimeError, "AI_FALLBACK_COMMANDS"):
+                Settings.from_env()
 
     def rounds(self, clock):
         timeouts = []

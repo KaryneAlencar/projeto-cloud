@@ -16,7 +16,8 @@
 body { margin: 0; }
 button, input { font: inherit; }
 button { cursor: pointer; transition: background .18s ease, border-color .18s ease, box-shadow .18s ease; }
-button:disabled { cursor: not-allowed; opacity: .5; }
+/* A aparência de desabilitado (cores com contraste legível) fica em App.css. */
+button:disabled, button[aria-disabled="true"] { cursor: not-allowed; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #b62e3680; outline-offset: 4px; }
 a { color: inherit; }
 p { line-height: 1.65; }

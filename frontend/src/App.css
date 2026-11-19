@@ -57,8 +57,6 @@ input::placeholder { color: #918689; }
 .page-footer p { font-size: 10px; }
 .error { background: #fff1ef; border: 1px solid #e9c5c0; color: #90232b; border-radius: 6px; padding: 12px; font-size: 12px; }
 .error button { display: block; margin-top: 8px; border: 1px solid #d8b4ae; background: white; color: #90232b; border-radius: 4px; padding: 7px; }
-.typing { font-size: 12px; color: #996369; padding: 10px; }
-.typing span { margin-left: 10px; }
 .empty-state { padding: 40px 10px; text-align: center; font-size: 13px; color: var(--muted); }
 .purchase-status { display: inline-block; font-size: 10px; margin-top: 15px; color: #944047; background: #f9ebe9; padding: 7px 9px; border: 1px solid #efd9d6; border-radius: 4px; }
 .order-items { list-style: none; margin: 22px 0; padding: 0; }
@@ -90,6 +88,69 @@ input::placeholder { color: #918689; }
 .status-confirmado { background: #e9edf0; color: #3b5664; }
 .status-cancelado { background: #f9e7e5; color: #942d36; }
 .history-updated { font-size: 9px; color: var(--muted); }
+/* --- Envio, espera e erros --- */
+.dots { display: inline-flex; gap: 4px; margin-right: 10px; }
+.dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+.dots i:nth-child(2) { animation-delay: .2s; }
+.dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: .25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+.typing { display: flex; align-items: center; font-size: 12px; color: #8c4448; padding: 10px; }
+.connecting { display: flex; align-items: center; justify-content: center; }
+.messages:focus-visible { outline: 3px solid #b62e3680; outline-offset: -3px; }
+.message-row.pending, .message-row.failed { flex-direction: column; align-items: flex-end; }
+.message-row.pending .message { opacity: .7; }
+.message-row.failed .message { border-style: dashed; border-color: #d8a8a2; }
+.send-failure { max-width: 94%; margin-top: 7px; text-align: right; font-size: 11px; color: var(--red-dark); }
+.send-failure p { line-height: 1.5; }
+.send-failure-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.retry {
+  border: 1px solid #d8b4ae;
+  border-radius: 4px;
+  background: white;
+  color: var(--red-dark);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 7px 11px;
+}
+.retry:hover { background: #fcf3f1; border-color: var(--red); }
+.link-button { border: 0; background: none; color: #655d60; font-size: 11px; padding: 7px 5px; text-decoration: underline; }
+.chat-footer > .error { margin-top: 12px; }
+.empty-state .error { display: inline-block; text-align: left; }
+.error p { font-size: 12px; }
+.confirm-error { margin-top: 10px; }
+
+/* --- Botões desabilitados: sem opacidade, com contraste legível --- */
+.text-button:disabled,
+.suggestions button[aria-disabled="true"] {
+  background: #f3efec;
+  border-color: var(--line);
+  border-style: dashed;
+  color: #6b6466;
+}
+.send:disabled, .confirm:disabled { background: #e6dfdc; color: #5f585a; box-shadow: none; }
+.confirm.working:disabled { background: var(--red-dark); color: white; cursor: progress; }
+
+/* --- Comprovante e mudança de status --- */
+.receipt-new { animation: receipt-flash 2.6s ease-out 1; }
+@keyframes receipt-flash {
+  0%, 25% { background: #f3cfca; box-shadow: 0 0 0 4px #b62e3630; }
+  100% { background: #fbf1ef; box-shadow: 0 0 0 0 #b62e3600; }
+}
+.status-change { display: inline-block; animation: status-in .6s ease-out 1; }
+@keyframes status-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
 @media (min-width: 1500px) { .messages { height: 440px; } }
 @media (max-width: 1000px) { .app-shell { padding: 0 4%; } .workspace { grid-template-columns: minmax(0, 1fr) 290px; gap: 18px; } .chat-heading { padding: 18px; } .chat-heading p { font-size: 10px; } .order-panel { padding: 21px; } .campus { display: none; } }
 @media (max-width: 700px) { .topbar { min-height: 82px; gap: 12px; } .brand { font-size: 24px; gap: 10px; } .brand-mark { width: 39px; height: 39px; font-size: 18px; } .brand small { font-size: 6px; letter-spacing: 1.2px; } .mode { font-size: 9px; padding: 7px 9px; } .intro { padding: 30px 0 26px; } .intro h1 { letter-spacing: -1.7px; } .intro p:last-child { font-size: 12px; } .workspace { grid-template-columns: 1fr; } .messages { height: 350px; padding: 19px; } .chat-heading { gap: 9px; padding: 16px; } .chat-heading h2 { font-size: 12px; } .chat-heading p { font-size: 9px; } .text-button { font-size: 9px; padding: 7px; } .assistant-avatar { width: 34px; height: 34px; } .chat-footer { padding: 0 15px 16px; } .message { max-width: 94%; padding: 13px 15px; } .suggestions { gap: 6px; } .suggestions button { padding: 8px; font-size: 9px; } .page-footer { flex-direction: column; gap: 4px; margin-top: 23px; } .demo-note { font-size: 11px; } }
@@ -97,3 +158,18 @@ input::placeholder { color: #918689; }
 @media (max-width: 1000px) { .intro-art { width: 300px; height: 190px; } }
 @media (max-width: 700px) { .intro-art { width: 150px; height: 135px; flex-shrink: 1; opacity: .85; } .intro { gap: 8px; } }
 @media (max-width: 420px) { .intro-art { display: none; } }
+
+/* --- Telas estreitas: altura útil para a conversa e alvos de toque maiores --- */
+@media (max-width: 700px) {
+  .messages { height: clamp(280px, 56svh, 460px); }
+  /* 16px evita o zoom automático do iOS ao focar o campo. */
+  input { font-size: 16px; padding: 9px; }
+  .send { width: 42px; height: 42px; }
+  .suggestions button { min-height: 36px; padding: 8px 10px; font-size: 11px; }
+  .text-button { min-height: 32px; }
+  .retry, .link-button { min-height: 34px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dots i, .receipt-new, .status-change { animation: none; }
+  .dots i { opacity: .6; }
+}

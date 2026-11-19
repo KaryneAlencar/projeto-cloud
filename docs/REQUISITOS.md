@@ -36,7 +36,7 @@ código declara.
 
 ## Requisito 16: o que a IA faz e o que ela não faz
 
-O chat envia ao Gemini (`gemini-3.8-flash` por padrão) seis funções, declaradas
+O chat envia ao Gemini (`gemini-flash-lite-latest` por padrão, com modelos reserva) seis funções, declaradas
 em `TOOLS` e executadas em `execute_tool`, ambas em `chat-service/app/ai.py`:
 
 | Função | Efeito real |

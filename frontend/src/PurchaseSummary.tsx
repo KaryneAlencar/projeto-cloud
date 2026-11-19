@@ -1,9 +1,16 @@
-import { demoMode, money } from './chat'
+import { useEffect, useRef } from 'react'
+import { demoMode, money, orderStatusLabel } from './chat'
 import type { Purchase } from './chat'
 
 type Props = {
   purchase: Purchase | null | undefined
   busy: boolean
+  // true enquanto a confirmação desta compra está em andamento.
+  confirming: boolean
+  // Falha da última tentativa de confirmação, exibida junto do botão.
+  error: string
+  // pedido_id recém-registrado nesta visita: recebe destaque breve e rolagem no celular.
+  highlightedOrder: string
   // false somente quando o servidor informa que a confirmação está desligada.
   confirmationEnabled: boolean
   onConfirm: () => void
@@ -15,9 +22,10 @@ function statusLabel(purchase: Purchase) {
   return 'Aguardando sua confirmação'
 }
 
-function confirmLabel(purchase: Purchase) {
-  if (demoMode) return 'Simular confirmação'
-  return purchase.status === 'confirmando' ? 'Repetir confirmação' : 'Confirmar pedido'
+function confirmLabel(purchase: Purchase, confirming: boolean) {
+  if (confirming) return 'Confirmando…'
+  if (demoMode) return 'Simular confirmação →'
+  return purchase.status === 'confirmando' ? 'Repetir confirmação →' : 'Confirmar pedido →'
 }
 
 function helpText(purchase: Purchase, confirmationEnabled: boolean) {
@@ -29,8 +37,30 @@ function helpText(purchase: Purchase, confirmationEnabled: boolean) {
   return 'Quer mudar algo? Peça na conversa antes de confirmar.'
 }
 
-function PurchaseDetails({ purchase, busy, confirmationEnabled, onConfirm }: Props & { purchase: Purchase }) {
+function Receipt({ purchase, highlighted }: { purchase: Purchase; highlighted: boolean }) {
+  const receipt = useRef<HTMLParagraphElement>(null)
+  const status = purchase.pedido_status || 'recebido'
+
+  // Em telas estreitas o resumo fica abaixo do chat: leva o comprovante até a vista.
+  useEffect(() => {
+    if (!highlighted || !window.matchMedia('(max-width: 700px)').matches) return
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    receipt.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' })
+  }, [highlighted])
+
+  return (
+    <p ref={receipt} className={`receipt${highlighted ? ' receipt-new' : ''}`} role="status">
+      <strong>#{purchase.pedido_id}</strong> · <span key={status} className="status-change">
+        {orderStatusLabel(status)}
+      </span>
+    </p>
+  )
+}
+
+function PurchaseDetails(props: Props & { purchase: Purchase }) {
+  const { purchase, busy, confirming, error, highlightedOrder, confirmationEnabled, onConfirm } = props
   const open = purchase.status === 'preparando' || purchase.status === 'confirmando'
+  const incomplete = !purchase.cliente || !purchase.local_entrega
   return <>
     <span className="purchase-status">{statusLabel(purchase)}</span>
     <ul className="order-items">
@@ -54,16 +84,18 @@ function PurchaseDetails({ purchase, busy, confirmationEnabled, onConfirm }: Pro
     </div>
     {open && <>
       <button
-        className="confirm"
-        disabled={busy || !purchase.cliente || !purchase.local_entrega || !confirmationEnabled}
+        className={`confirm${confirming ? ' working' : ''}`}
+        disabled={busy || incomplete || !confirmationEnabled}
+        aria-busy={confirming}
         onClick={onConfirm}
       >
-        {confirmLabel(purchase)} →
+        {confirmLabel(purchase, confirming)}
       </button>
+      {error && <p className="error confirm-error" role="alert">{error}</p>}
       <p className="order-help">{helpText(purchase, confirmationEnabled)}</p>
     </>}
     {purchase.pedido_id && (
-      <p className="receipt" role="status">#{purchase.pedido_id} · {purchase.pedido_status || 'recebido'}</p>
+      <Receipt purchase={purchase} highlighted={highlightedOrder === purchase.pedido_id} />
     )}
   </>
 }

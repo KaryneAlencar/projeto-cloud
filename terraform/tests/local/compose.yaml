@@ -90,7 +90,7 @@ services:
       ORDERS_API_URL: http://api:8000
       ORDERS_INTERNAL_TOKEN: token-local-only
       AI_PROVIDER: commands
-      GEMINI_MODEL: gemini-3.8-flash
+      GEMINI_MODEL: gemini-flash-lite-latest
       GEMINI_API_KEY: chave-nao-configurada
       APP_ORIGINS: http://127.0.0.1:18081
       COOKIE_SECURE: "false"

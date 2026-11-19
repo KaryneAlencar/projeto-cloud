@@ -1,3 +1,4 @@
+import copy
 import logging
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
@@ -28,6 +29,7 @@ logger = logging.getLogger("insper-eats-chat")
 
 DATABASE_UNAVAILABLE = "O banco de conversas está indisponível. Tente novamente em instantes."
 BUSY = "Ainda estou respondendo à mensagem anterior. Aguarde um instante."
+AI_FALLBACK_NOTICE = "O assistente de IA está indisponível agora; respondi pelo modo básico."
 
 
 class IncomingMessage(BaseModel):
@@ -172,8 +174,12 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
                 connection.execute(text("SELECT 1"))
         except Exception:
             return JSONResponse(status_code=503, content={"status": "indisponivel", "banco": "indisponivel"})
+        models = settings.gemini_models
         return {"status": "ok", "banco": "ok", "modo": settings.ai_provider,
-                "ia_configurada": settings.ai_configured, "confirmacao_habilitada": True}
+                "ia_configurada": settings.ai_configured, "confirmacao_habilitada": True,
+                # Somente nomes de modelos e a opção de reserva: nunca a chave.
+                "modelo": models[0] if models else None, "modelos_reserva": list(models[1:]),
+                "reserva_sem_ia": settings.ai_fallback_commands}
 
     @app.get("/chat/produtos")
     def products():
@@ -242,8 +248,21 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
                 answer = reply(conversation, content, owned_client)
             else:
                 history = session.scalars(select(Message).where(Message.conversa_id == conversation.id).order_by(Message.sequencia)).all()
-                answer = respond(conversation, history, content, owned_client, provider, settings.ai_timeout,
-                                 list_orders=lambda: list_browser_orders(session, owner_context.get(), client))
+                before = (copy.deepcopy(conversation.compra), conversation.chave_idempotencia,
+                          conversation.estado, conversation.pedido_id)
+                try:
+                    answer = respond(conversation, history, content, owned_client, provider, settings.ai_timeout,
+                                     list_orders=lambda: list_browser_orders(session, owner_context.get(), client))
+                except AIError as exc:
+                    # Só indisponibilidade do provedor (todos os modelos fora, timeout) cai no
+                    # roteiro; chave/configuração/bloqueio seguem como erro (ai_failure).
+                    if not (settings.ai_fallback_commands and exc.unavailable):
+                        raise
+                    logger.warning("ai_fallback_commands conversation_id=%s code=%s", conversation.id, exc.code)
+                    # Desfaz o que as ferramentas da IA alteraram nesta mensagem antes da falha:
+                    # o roteiro parte do estado do início da mensagem, sem seleção parcial.
+                    conversation.compra, conversation.chave_idempotencia, conversation.estado, conversation.pedido_id = before
+                    answer = AI_FALLBACK_NOTICE + "\n\n" + reply(conversation, content, owned_client)
             conversation.atualizada_em = now()
             session.add(Message(conversa_id=conversation.id, papel="usuario", conteudo=content))
             session.flush()

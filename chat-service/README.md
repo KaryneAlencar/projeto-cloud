@@ -24,7 +24,9 @@ ORDERS_API_TIMEOUT=5
 ORDERS_INTERNAL_TOKEN=MESMO_VALOR_DA_API
 AI_PROVIDER=gemini
 GEMINI_API_KEY=SUA_CHAVE_LOCAL
-GEMINI_MODEL=gemini-3.8-flash
+GEMINI_MODEL=gemini-flash-lite-latest
+GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-3.8-flash
+AI_FALLBACK_COMMANDS=true
 AI_TIMEOUT=120
 DB_POOL_SIZE=5
 DB_MAX_OVERFLOW=10
@@ -38,6 +40,10 @@ de ficar na fila. Dimensione `processos x (DB_POOL_SIZE + DB_MAX_OVERFLOW)` abai
 
 Crie sua chave em https://aistudio.google.com/apikey e coloque-a somente no .env local.
 O modelo é configurável e precisa estar disponível na conta do provedor.
+`GEMINI_MODEL` (padrão `gemini-flash-lite-latest`) é o modelo principal e
+`GEMINI_FALLBACK_MODELS` (padrão `gemini-3.5-flash-lite,gemini-3.8-flash`) lista as reservas,
+separadas por vírgula e tentadas em ordem; vazio desliga as reservas. Veja
+"Falhas temporárias do provedor" abaixo.
 A faixa gratuita tem cotas por conta/projeto/modelo; chave criada não significa uso ilimitado.
 Confira disponibilidade e cotas no Google AI Studio: https://ai.google.dev/gemini-api/docs/pricing
 Conteúdo da faixa gratuita pode ser usado para melhorar produtos do Google; use dados fictícios
@@ -47,7 +53,9 @@ a mensagem enviada à IA retorna 503 com texto genérico ("O assistente está in
 no momento...") e um `code` (por exemplo gemini_not_configured, gemini_http_401,
 gemini_http_404). A orientação de configuração (chave, modelo, cota) aparece somente no
 log `ai_dependency_failure`, nunca no navegador. Não existe
-fallback silencioso para respostas simuladas. Reinicie após alterar o `.env`.
+fallback silencioso para respostas simuladas: quando todos os modelos estão indisponíveis,
+a resposta vem do roteiro sem IA e começa com um aviso explícito (`AI_FALLBACK_COMMANDS`,
+abaixo). Erros de chave/configuração continuam em 503. Reinicie após alterar o `.env`.
 `AI_PROVIDER=commands` permite testar comandos explícitos sem chamada à IA,
 mas as compras desse modo também são REAIS após clicar em Confirmar pedido.
 
@@ -86,11 +94,12 @@ O ciclo de ferramentas usa a API nativa Gemini generateContent com schemas de fu
 validação local por Pydantic, no máximo seis rodadas e prazo total configurável.
 As respostas nativas e thoughtSignature são preservadas durante cada ciclo de ferramentas;
 textos internos marcados como thought não são exibidos. Chave transmitida em cabeçalho,
-nunca na URL. Erros de cota 429 são informados sem repetição automática. Histórico recente (até 30 mensagens), estado da
+nunca na URL. Erros de cota 429 não são repetidos no mesmo modelo (passam ao próximo). Histórico recente (até 30 mensagens), estado da
 seleção e resultados das ferramentas são enviados ao provedor de IA. Não coloque segredos
 nas conversas. Chaves não são enviadas ao frontend nem registradas em logs.
 A conversa completa permanece no PostgreSQL. Se a IA falhar após preparar uma seleção,
-a transação local é revertida: nenhuma preparação parcial é persistida.
+nenhuma preparação parcial é persistida: em erro, a transação local é revertida; na
+resposta pelo roteiro sem IA, a seleção volta ao que era no início da mensagem.
 Falha da API de pedidos DENTRO de uma ferramenta (pedido inexistente, API indisponível)
 não derruba a requisição: a IA recebe {"erro": ...} como resultado e explica ao usuário;
 a mensagem e uma preparação feita no mesmo turno são mantidas.
@@ -99,9 +108,11 @@ Referência da implementação: https://ai.google.dev/api/generate-content
 Ferramentas: https://ai.google.dev/gemini-api/docs/function-calling
 
 AI_PROVIDER aceita somente gemini ou commands; outro valor impede a inicialização com
-mensagem de configuração. Não há outro provedor nem fallback automático. A propriedade
-ia_configurada do /health verifica apenas a presença de chave/modelo do Gemini, sem
-chamada externa. O status não comprova validade da chave ou saldo/cota.
+mensagem de configuração. Não há outro provedor; a reserva é entre modelos Gemini e, por
+último, o roteiro sem IA. A propriedade ia_configurada do /health verifica apenas a presença
+de chave/modelo do Gemini, sem chamada externa. O status não comprova validade da chave ou
+saldo/cota. O /health também informa `modelo` (principal), `modelos_reserva` e
+`reserva_sem_ia` (valor de AI_FALLBACK_COMMANDS); nunca a chave.
 
 ## Confirmação segura
 
@@ -170,8 +181,11 @@ evita-se ressuscitar uma seleção antiga após confirmação. Mesmo ID com outr
 409. O contrato da interface usa status preparando, confirmando e confirmado. confirmado
 significa compra registrada; pedido_status contém o status real retornado pelo backend.
 
-No modo commands: 'Ver o cardápio', 'Quero 2 brownies', 'Selecionar 1:2, 2:1',
-'Meu nome é Ana', 'Entrega: sala 512, prédio 2', 'Pedido 4' e 'cancelar'.
+No modo commands (e na reserva sem IA): 'Ver o cardápio', 'Quero 2 brownies',
+'Selecionar 1:2, 2:1', 'Meu nome é Ana', 'Entrega: sala 512, prédio 2', 'Pedido 4' e 'cancelar'.
+'Quero N produto' aceita quantidade por extenso de um a dez, artigos e plural ('quero um
+brownie', 'quero dois cafés', 'quero 2 dos brownies') e parte do nome, desde que só um
+produto do catálogo corresponda; em caso de ambiguidade nada é escolhido.
 Nome e entrega só alteram uma seleção em preparando; pedido já registrado ou com
 confirmação pendente não é alterado. 'Pedido N' inexistente na sessão responde em texto.
 
@@ -209,10 +223,33 @@ da conversa nem credenciais. Na execução pelo Uvicorn, use --log-level info pa
 
 ## Falhas temporárias do provedor e meus pedidos
 
-Erros HTTP 500/502/503/504 do Gemini têm no máximo três tentativas por chamada, com pausas
-de 1 e 2 segundos. O tempo de rede e as pausas consomem o mesmo orçamento restante da IA.
-As retentativas reutilizam o mesmo pedido de geração, sem reexecutar ferramentas nem criar compras.
-Erros de chave, cota (429) e validação não são repetidos automaticamente.
+Cada rodada percorre a cadeia de modelos (GEMINI_MODEL e depois GEMINI_FALLBACK_MODELS)
+dentro do mesmo prazo da rodada (até 45 s). Troca de modelo: HTTP 500/502/503/504, 429,
+404 (modelo inexistente), timeout e erro de transporte. Não troca: 401/403 (chave ou
+permissão), 400 e bloqueio de conteúdo. Em 5xx há uma repetição no mesmo modelo após 1 s;
+429, 404 e timeout passam direto ao próximo. Um modelo que não é o último da cadeia tem
+no máximo 15 s (tentativa, pausa e repetição); o último recebe o tempo restante da rodada.
+O tempo de rede e as pausas consomem o mesmo orçamento da IA. As retentativas reutilizam o
+mesmo pedido de geração, sem reexecutar ferramentas nem criar compras.
+
+O modelo que respondeu primeiro fica fixado até o fim do ciclo de ferramentas daquela
+mensagem: a thoughtSignature devolvida por um modelo é validada na rodada seguinte e a
+documentação só a garante para o próprio modelo. Só há troca no meio do ciclo se o modelo
+fixado falhar; nesse caso as assinaturas das chamadas anteriores vão com o valor neutro
+documentado (`skip_thought_signature_validator`), e uma recusa 400 desse histórico conta
+como indisponibilidade. Referência: https://ai.google.dev/gemini-api/docs/thought-signatures
+A mensagem seguinte começa de novo pelo modelo principal.
+
+Logs, sem conteúdo de conversa: `ai_model_used model=... fallback=true/false` (INFO, quem
+atendeu a rodada), `ai_model_failed model=... code=... next=...` (WARNING) e
+`ai_fallback_commands conversation_id=... code=...` (WARNING).
+
+Com `AI_FALLBACK_COMMANDS=true` (padrão), se todos os modelos estiverem indisponíveis ou o
+prazo da IA acabar, a mensagem é respondida com HTTP 200 pelo roteiro do modo commands,
+precedida de "O assistente de IA está indisponível agora; respondi pelo modo básico.".
+Alterações de seleção feitas pela IA nessa mensagem antes da falha são desfeitas antes de o
+roteiro rodar. Erros de chave, configuração, bloqueio e resposta inválida continuam em 503.
+`AI_FALLBACK_COMMANDS=false` devolve 503 também na indisponibilidade.
 
 A ferramenta listar_meus_pedidos e GET /chat/pedidos consultam compras confirmadas em
 todas as conversas da sessão atual, recuperando status pela API de pedidos.

@@ -1,4 +1,5 @@
-"""Roteamento por comandos explícitos (AI_PROVIDER=commands), sem chamada à IA."""
+"""Roteamento por comandos explícitos, sem chamada à IA: modo AI_PROVIDER=commands e
+reserva do modo gemini quando todos os modelos estão indisponíveis (AI_FALLBACK_COMMANDS)."""
 import re
 import unicodedata
 from decimal import Decimal
@@ -9,6 +10,50 @@ from .orders import OrdersError
 
 def normalized(text):
     return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if not unicodedata.combining(c))
+
+
+NUMBERS = {"um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "quatro": 4, "cinco": 5,
+           "seis": 6, "sete": 7, "oito": 8, "nove": 9, "dez": 10}
+# Palavras entre a quantidade e o nome: "quero 2 dos brownies", "quero 3 unidades de café".
+FILLERS = {"o", "a", "os", "as", "de", "do", "da", "dos", "das", "unidade", "unidades"}
+WANT = re.compile(rf"quero\s+(\d+|{'|'.join(NUMBERS)})\s+(.+)")
+
+
+def word_forms(word):
+    """A palavra e seus possíveis singulares; plural e singular compartilham uma forma."""
+    forms = {word}
+    if word.endswith("s") and len(word) > 2:
+        forms.add(word[:-1])                                  # brownies/brownie, cafes/cafe
+        if word.endswith(("oes", "aes")):
+            forms.add(word[:-3] + "ao")                       # paes/pao, limoes/limao
+        if word.endswith(("res", "zes", "ses")):
+            forms.add(word[:-2])                              # sabores/sabor
+        if word.endswith("ns"):
+            forms.add(word[:-2] + "m")                        # folhagens/folhagem
+        if word.endswith(("ais", "eis", "ois")):
+            forms.add(word[:-2] + "l")                        # pasteis/pastel
+    return forms
+
+
+def same_word(a, b):
+    return bool(word_forms(a) & word_forms(b))
+
+
+def find_product(name, products):
+    """Produto único correspondente ao nome digitado; None se não houver ou for ambíguo."""
+    wanted = re.findall(r"[a-z0-9]+", name)
+    while wanted and wanted[0] in FILLERS:
+        wanted.pop(0)
+    if not wanted:
+        return None
+    named = [(p, re.findall(r"[a-z0-9]+", normalized(p.nome))) for p in products]
+    # 1) Nome completo, tolerando plural. 2) Único produto cujo nome contém todas as palavras.
+    exact = [p for p, words in named if len(words) == len(wanted) and all(map(same_word, words, wanted))]
+    partial = [p for p, words in named if all(any(same_word(w, word) for word in words) for w in wanted)]
+    for matches in (exact, partial):
+        if matches:
+            return matches[0] if len(matches) == 1 else None
+    return None
 
 
 def reply(conversation, text, orders):
@@ -56,14 +101,14 @@ def reply(conversation, text, orders):
                     return f"Produto {pid} não encontrado no catálogo real."
                 selection.append((by_id[pid], quantity))
         else:
-            match = re.fullmatch(r"quero\s+(\d+)\s+(.+?)[.!]?", content)
+            match = WANT.fullmatch(re.sub(r"(?:,?\s*por favor)?\s*[.!?]*$", "", content))
             if not match:
-                return 'Informe uma quantidade: “Quero 2 brownies”. Para vários produtos, use “Selecionar ID:quantidade, ID:quantidade”.'
-            quantity, name = int(match[1]), match[2].strip()
-            matches = [p for p in products if normalized(p.nome).rstrip("s") == name.rstrip("s")]
-            if len(matches) != 1:
-                return 'Não identifiquei um único produto. Consulte o cardápio e use “Selecionar ID:quantidade”.'
-            selection.append((matches[0], quantity))
+                return 'Informe a quantidade e um produto por vez: “Quero 2 brownies”.'
+            quantity = NUMBERS[match[1]] if match[1] in NUMBERS else int(match[1])
+            product = find_product(match[2], products)
+            if product is None:
+                return 'Não identifiquei um único produto. Consulte o cardápio (“Ver o cardápio”) e use o nome como aparece nele: “Quero 2 brownies”.'
+            selection.append((product, quantity))
         if len({p.id for p, _ in selection}) != len(selection):
             return "Informe cada produto apenas uma vez."
         for product, quantity in selection:
@@ -99,4 +144,4 @@ def reply(conversation, text, orders):
         conversation.chave_idempotencia = purchase["id"]
         return "Informação salva. Confira o resumo da seleção. Use o botão Confirmar pedido após revisar os dados."
 
-    return 'Esta etapa ainda não usa IA. Posso consultar o catálogo real (“Ver o cardápio”), preparar uma seleção (“Quero 2 brownies”) ou consultar um pedido (“Pedido 4”).'
+    return 'Posso mostrar o cardápio (“Ver o cardápio”), preparar um pedido (“Quero 2 brownies”) ou consultar um pedido (“Pedido 4”).'

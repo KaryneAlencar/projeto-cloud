@@ -369,37 +369,122 @@ class ServiceTests(unittest.TestCase):
             self.assertIsNone(current['compra'])
             self.assertEqual(len(current['mensagens']), 1)
 
-    def test_persistent_gemini_503_after_prepare_returns_clean_error_without_partial_selection(self):
+    def gemini_transport(self, *scripted):
+        """urlopen simulado: respostas roteirizadas e, depois delas, 503 em todos os modelos."""
         import io
         import json
         from urllib.error import HTTPError
-        def response(parts):
-            return io.BytesIO(json.dumps({"candidates": [{"finishReason": "STOP", "content": {"role": "model", "parts": parts}}]}).encode())
-        unavailable = [HTTPError("https://example.test", 503, "high demand", {}, None) for _ in range(3)]
-        responses = [
-            response([{"functionCall": {"name": "listar_produtos", "args": {}, "id": "catalog"}}]),
-            response([{"functionCall": {"name": "preparar_compra", "args": {"itens": [{"produto_id": 10, "quantidade": 2}], "cliente": "Ana", "local_entrega": "Sala 512"}, "id": "prepare"}}]),
-            *unavailable,
-        ]
+        pending = [io.BytesIO(json.dumps({"candidates": [{"finishReason": "STOP", "content": {"role": "model", "parts": parts}}]}).encode()) for parts in scripted]
+        def transport(request, timeout):
+            if pending:
+                return pending.pop(0)
+            raise HTTPError("https://example.test", 503, "high demand", {}, None)
+        return transport
+
+    CATALOG_CALL = [{"functionCall": {"name": "listar_produtos", "args": {}, "id": "catalog"}}]
+    PREPARE_CALL = [{"functionCall": {"name": "preparar_compra", "args": {"itens": [{"produto_id": 10, "quantidade": 2}], "cliente": "Ana", "local_entrega": "Sala 512"}, "id": "prepare"}}]
+    NOTICE = "O assistente de IA está indisponível agora; respondi pelo modo básico."
+
+    def test_all_models_unavailable_answers_by_script_without_partial_selection(self):
+        import json
+        # A IA consulta o catálogo e prepara uma seleção; depois todos os modelos devolvem 503.
+        transport = self.gemini_transport(self.CATALOG_CALL, self.PREPARE_CALL)
         settings = Settings(self.url, ai_provider="gemini", gemini_api_key="test-key")
-        with patch("app.gemini.urlopen", side_effect=responses) as transport, patch("app.gemini.time.sleep") as sleep:
+        with patch("app.gemini.urlopen", side_effect=transport) as calls, patch("app.gemini.time.sleep") as sleep:
             with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake)) as client:
                 cid = client.post('/chat/conversas', json={}).json()['id']
                 mid = str(uuid4())
-                result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Quero dois brownies para Ana, sala 512", "mensagem_id": mid})
+                with self.assertLogs("insper-eats-chat", level="WARNING") as logs:
+                    result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Ver o cardápio", "mensagem_id": mid})
+                self.assertEqual(result.status_code, 200, result.text)
+                # A terceira rodada recebeu o resultado de uma preparação bem-sucedida...
+                sent = json.loads(calls.call_args.args[0].data)
+                self.assertEqual(sent['contents'][-1]['parts'][0]['functionResponse']['response']['result']['status'], 'preparando')
+                # ...mas a resposta do roteiro não carrega essa seleção parcial.
+                body = result.json()
+                self.assertIsNone(body['compra'])
+                answer = body['mensagens'][-1]['conteudo']
+                self.assertTrue(answer.startswith(self.NOTICE + "\n\n"))
+                self.assertIn("**Brownie** · R$ 8.10", answer)
+                self.assertEqual([m['papel'] for m in body['mensagens']], ['assistente', 'usuario', 'assistente'])
+                current = client.get(f'/chat/conversas/{cid}').json()
+                self.assertIsNone(current['compra'])
+                self.assertEqual(len(current['mensagens']), 3)
+                # Reenvio da mesma mensagem não chama a IA de novo.
+                before = calls.call_count
+                self.assertEqual(client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Ver o cardápio", "mensagem_id": mid}).json(), current)
+                self.assertEqual(calls.call_count, before)
+                # O botão "Quero 2 brownies" continua funcionando pelo roteiro.
+                wanted = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Quero 2 brownies", "mensagem_id": str(uuid4())})
+                self.assertEqual(wanted.status_code, 200)
+                self.assertEqual(wanted.json()['compra']['total'], 16.2)
+                self.assertEqual(wanted.json()['compra']['cliente'], "")
+                self.assertTrue(wanted.json()['mensagens'][-1]['conteudo'].startswith(self.NOTICE))
+        warnings = [line for line in logs.output if "ai_fallback_commands" in line]
+        self.assertEqual(len(warnings), 1)
+        self.assertTrue(warnings[0].startswith("WARNING:"))
+        self.assertIn("code=gemini_http_503", warnings[0])
+        self.assertNotIn("cardápio", " ".join(logs.output))
+        # 2 rodadas ok + 3 modelos x 2 tentativas; depois, na outra mensagem, mais 3 x 2.
+        self.assertEqual(calls.call_count, 2 + 6 + 6)
+        self.assertEqual({call.args[0] for call in sleep.call_args_list}, {1})
+        self.assertEqual(len(self.fake.created), 0)
+
+    def test_script_fallback_restores_selection_changed_by_failed_ai_turn(self):
+        # Mensagem 1: a IA prepara a seleção. Mensagem 2: a IA cancela a seleção e cai.
+        transport = self.gemini_transport(self.CATALOG_CALL, self.PREPARE_CALL, [{"text": "Confira o resumo."}],
+                                          [{"functionCall": {"name": "cancelar_selecao", "args": {}, "id": "cancel"}}])
+        settings = Settings(self.url, ai_provider="gemini", gemini_api_key="test-key")
+        with patch("app.gemini.urlopen", side_effect=transport), patch("app.gemini.time.sleep"):
+            with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake)) as client:
+                cid = client.post('/chat/conversas', json={}).json()['id']
+                prepared = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Dois brownies para Ana, sala 512", "mensagem_id": str(uuid4())}).json()['compra']
+                self.assertEqual(prepared['status'], 'preparando')
+                result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Obrigada", "mensagem_id": str(uuid4())})
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(result.json()['compra'], prepared)
+                self.assertEqual(result.json()['mensagens'][-1]['conteudo'], self.NOTICE + "\n\nPosso mostrar o cardápio (“Ver o cardápio”), preparar um pedido (“Quero 2 brownies”) ou consultar um pedido (“Pedido 4”).")
+                # A seleção restaurada segue confirmável com a mesma chave de idempotência.
+                confirmed = client.post(f'/chat/conversas/{cid}/confirmar', json={"compra_id": prepared['id']})
+                self.assertEqual(confirmed.status_code, 200, confirmed.text)
+        self.assertEqual([call["chave_idempotencia"] for call in self.fake.calls], [prepared['id']])
+
+    def test_ai_fallback_commands_false_keeps_503(self):
+        transport = self.gemini_transport(self.CATALOG_CALL, self.PREPARE_CALL)
+        settings = Settings(self.url, ai_provider="gemini", gemini_api_key="test-key", ai_fallback_commands=False)
+        with patch("app.gemini.urlopen", side_effect=transport) as calls, patch("app.gemini.time.sleep"):
+            with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake)) as client:
+                cid = client.post('/chat/conversas', json={}).json()['id']
+                result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Ver o cardápio", "mensagem_id": str(uuid4())})
                 self.assertEqual(result.status_code, 503)
                 self.assertEqual(result.json()['code'], 'gemini_http_503')
                 self.assertIn('temporariamente indisponível', result.json()['detail'])
-                # A terceira chamada recebeu o resultado de uma preparação bem-sucedida.
-                sent = json.loads(transport.call_args.args[0].data)
-                prepared = sent['contents'][-1]['parts'][0]['functionResponse']['response']['result']
-                self.assertEqual(prepared['status'], 'preparando')
                 current = client.get(f'/chat/conversas/{cid}').json()
                 self.assertIsNone(current['compra'])
                 self.assertEqual(len(current['mensagens']), 1)
-        self.assertEqual(transport.call_count, 5)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
-        self.assertEqual(len(self.fake.created), 0)
+                self.assertFalse(client.get('/health').json()['reserva_sem_ia'])
+        self.assertEqual(calls.call_count, 2 + 6)
+
+    def test_key_error_is_not_answered_by_script_nor_other_models(self):
+        from urllib.error import HTTPError
+        settings = Settings(self.url, ai_provider="gemini", gemini_api_key="test-key")
+        with patch("app.gemini.urlopen", side_effect=HTTPError("https://example.test", 403, "denied", {}, None)) as calls:
+            with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake)) as client:
+                cid = client.post('/chat/conversas', json={}).json()['id']
+                result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Ver o cardápio", "mensagem_id": str(uuid4())})
+                self.assertEqual(result.status_code, 503)
+                self.assertEqual(result.json()['code'], 'gemini_http_403')
+                self.assertEqual(len(client.get(f'/chat/conversas/{cid}').json()['mensagens']), 1)
+        self.assertEqual(calls.call_count, 1)
+
+    def test_health_reports_configured_models_without_key(self):
+        settings = Settings(self.url, ai_provider="gemini", gemini_api_key="secret-test-key", gemini_model="models/a", gemini_fallback_models=("b", "a", "c"))
+        with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake)) as client:
+            health = client.get('/health')
+        self.assertEqual(health.json()['modelo'], "a")
+        self.assertEqual(health.json()['modelos_reserva'], ["b", "c"])
+        self.assertTrue(health.json()['reserva_sem_ia'])
+        self.assertNotIn("secret-test-key", health.text)
 
     def test_ai_recovers_invalid_fields_and_wrong_product_id_in_same_turn(self):
         import json

@@ -26,6 +26,14 @@ export type Conversation = {
 export type OrderSummary = { pedido_id: number | string; status: string; total: number }
 export type OrderHistory = { escopo: string; pedidos: OrderSummary[] }
 
+export const orderStatusLabels: Record<string, string> = {
+  recebido: 'Recebido',
+  confirmado: 'Confirmado',
+  cancelado: 'Cancelado',
+  simulado: 'Simulado',
+}
+export const orderStatusLabel = (status: string) => orderStatusLabels[status] || status
+
 export const demoMode = import.meta.env.VITE_CHAT_MODE === 'demo'
 export const money = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
@@ -33,15 +41,73 @@ const base = (import.meta.env.VITE_CHAT_API_URL || '/api').replace(/\/$/, '')
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  // Código técnico opcional do servidor (por exemplo gemini_http_429).
+  code?: string
+  constructor(status: number, message: string, code?: string) {
     super(message)
     this.status = status
+    this.code = code
   }
+}
+
+// Identificador de mensagem. crypto.randomUUID só existe em contexto seguro (HTTPS ou
+// localhost); atrás de um endereço HTTP simples ele não existe e o envio falharia calado.
+export function newId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+export const sleep = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
+
+// --- Leitura dos erros: textos curtos e acionáveis para a interface ---
+
+const ASSISTANT_DOWN = /assistente está indisponível/i
+
+// 409 de conversa ocupada: o servidor ainda processa a mensagem anterior.
+export const isBusy = (e: unknown) =>
+  e instanceof ApiError && e.status === 409 && /ainda estou respondendo/i.test(e.message)
+
+export const isPendingConfirmation = (e: unknown) =>
+  e instanceof ApiError && e.status === 409 && /confirmação pendente/i.test(e.message)
+
+// 404 da conversa: ela não pertence (mais) a esta sessão do navegador.
+export const isMissingConversation = (e: unknown) =>
+  e instanceof ApiError && e.status === 404 && /conversa não encontrada/i.test(e.message)
+
+export function explain(e: unknown): string {
+  if (isPendingConfirmation(e)) {
+    return 'Há uma confirmação pendente. Use “Repetir confirmação” no resumo do pedido antes de continuar.'
+  }
+  if (isBusy(e)) return 'O assistente ainda está respondendo à mensagem anterior.'
+  if (e instanceof ApiError && e.status === 503) {
+    if (e.code === 'gemini_http_429') return 'O assistente atingiu o limite de uso. Aguarde um instante.'
+    if (e.code?.startsWith('gemini') || ASSISTANT_DOWN.test(e.message)) {
+      return 'O assistente está indisponível no momento.'
+    }
+  }
+  if (e instanceof Error && e.message) return e.message
+  return 'Não foi possível concluir. Tente de novo.'
+}
+
+// Texto usado quando o servidor (ou o proxy) responde com erro sem explicação própria.
+function fallbackMessage(status: number) {
+  if (status === 429) return 'Muitas mensagens em pouco tempo. Aguarde um instante.'
+  if (status === 502 || status === 503 || status === 504) return 'O serviço está indisponível no momento.'
+  return 'Não foi possível concluir. Tente de novo.'
 }
 
 // --- Modo integrado: sessão anônima (cookie HttpOnly) + token CSRF em memória ---
 
 let csrf = ''
+
+function sessionFailure(status: number, detail: unknown) {
+  if (typeof detail === 'string' && detail) return detail
+  return status >= 502 ? fallbackMessage(status) : 'Não foi possível iniciar sua sessão.'
+}
 let initializing: Promise<void> | null = null
 
 async function ensureSession() {
@@ -55,7 +121,7 @@ async function ensureSession() {
       })
       const value = await response.json().catch(() => null)
       if (!response.ok || typeof value?.csrf_token !== 'string') {
-        throw new ApiError(response.status, value?.detail || 'Não foi possível iniciar sua sessão. Tente novamente.')
+        throw new ApiError(response.status, sessionFailure(response.status, value?.detail))
       }
       csrf = value.csrf_token
     })().finally(() => { initializing = null })
@@ -80,9 +146,9 @@ async function apiRequest<T>(path: string, body?: unknown, retried = false): Pro
   } catch (error) {
     if (error instanceof ApiError) throw error
     if (error instanceof DOMException && error.name === 'TimeoutError') {
-      throw new Error('O chat excedeu o tempo de espera. Tente novamente.')
+      throw new Error('O chat excedeu o tempo de espera.')
     }
-    throw new Error('O serviço não respondeu. Confira a conexão e tente novamente.')
+    throw new Error('O serviço não respondeu. Confira sua conexão.')
   }
   // 401: a sessão expirou. 403 em escrita: o token CSRF em memória não pertence mais ao
   // cookie atual (outra aba renovou a sessão, por exemplo). Nos dois casos o servidor
@@ -96,7 +162,8 @@ async function apiRequest<T>(path: string, body?: unknown, retried = false): Pro
   if (!response.ok) {
     throw new ApiError(
       response.status,
-      typeof value?.detail === 'string' ? value.detail : 'Não foi possível concluir. Tente novamente.',
+      typeof value?.detail === 'string' ? value.detail : fallbackMessage(response.status),
+      typeof value?.code === 'string' ? value.code : undefined,
     )
   }
   return value as T
@@ -117,7 +184,9 @@ async function request(path: string, body?: unknown): Promise<Conversation> {
 
 const demoPrefix = 'insper-eats:demo:'
 const key = (id: string) => `${demoPrefix}${id}`
-const msg = (papel: Message['papel'], conteudo: string): Message => ({ id: crypto.randomUUID(), papel, conteudo })
+const msg = (papel: Message['papel'], conteudo: string): Message => ({ id: newId(), papel, conteudo })
+// Pequena espera simulada: a demonstração mostra os mesmos estados de envio do modo integrado.
+const demoDelay = () => sleep(450)
 
 function save(c: Conversation) {
   localStorage.setItem(key(c.id), JSON.stringify(c))
@@ -130,7 +199,8 @@ function read(id: string): Conversation {
     const c: unknown = raw ? JSON.parse(raw) : null
     if (isConversation(c)) return c
   } catch { /* handled below */ }
-  throw new Error('Conversa não encontrada neste navegador. Inicie uma nova conversa.')
+  // Mesmo formato do servidor: a interface cria uma conversa nova automaticamente.
+  throw new ApiError(404, 'Conversa não encontrada neste navegador.')
 }
 
 const products = [
@@ -165,7 +235,7 @@ function demoAnswer(c: Conversation, content: string): string {
       return 'Na demonstração, escolha entre 1 e 20 unidades de cada produto.'
     }
     c.compra = {
-      id: crypto.randomUUID(),
+      id: newId(),
       cliente: '',
       local_entrega: '',
       itens,
@@ -225,7 +295,7 @@ export const chat = {
 
   async create(): Promise<Conversation> {
     if (!demoMode) return request('/chat/conversas', {})
-    return save({ id: crypto.randomUUID(), mensagens: [msg('assistente', demoGreeting)], compra: null, processadas: [] })
+    return save({ id: newId(), mensagens: [msg('assistente', demoGreeting)], compra: null, processadas: [] })
   },
 
   async get(id: string): Promise<Conversation> {
@@ -236,6 +306,7 @@ export const chat = {
     if (!demoMode) {
       return request(`/chat/conversas/${encodeURIComponent(id)}/mensagens`, { conteudo: content, mensagem_id: messageId })
     }
+    await demoDelay()
     const c = read(id)
     if (c.processadas?.includes(messageId)) return c
     const answer = demoAnswer(c, content)
@@ -246,6 +317,7 @@ export const chat = {
 
   async confirm(id: string, purchaseId: string): Promise<Conversation> {
     if (!demoMode) return request(`/chat/conversas/${encodeURIComponent(id)}/confirmar`, { compra_id: purchaseId })
+    await demoDelay()
     const c = read(id)
     if (!c.compra || c.compra.id !== purchaseId) throw new Error('A seleção mudou. Confira o resumo novamente.')
     if (c.compra.status === 'confirmado') return c

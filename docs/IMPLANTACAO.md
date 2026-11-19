@@ -59,7 +59,9 @@ Não execute `down -v` no ambiente normal: isso remove os volumes do banco.
 | CHAT_DATABASE_URL | chat, segredo | URL PostgreSQL persistente, com driver postgresql+psycopg |
 | GEMINI_API_KEY | chat, segredo | Chave do projeto do Google AI Studio |
 | AI_PROVIDER | chat | gemini em operação; commands somente para roteiro de desenvolvimento |
-| GEMINI_MODEL | chat | Modelo disponível na conta; exemplo gemini-3.8-flash |
+| GEMINI_MODEL | chat | Modelo principal; padrão gemini-flash-lite-latest |
+| GEMINI_FALLBACK_MODELS | chat | Modelos reserva, em ordem, usados quando o principal está indisponível (503, 429, timeout) |
+| AI_FALLBACK_COMMANDS | chat | true: com todos os modelos fora, responde pelo roteiro básico com aviso, em vez de erro |
 | AI_TIMEOUT | chat | Orçamento total de IA, até 120 segundos |
 | ORDERS_API_URL | chat | Endereço interno da API de pedidos |
 | ORDERS_API_TIMEOUT | chat | Prazo independente da API, padrão 5 segundos |

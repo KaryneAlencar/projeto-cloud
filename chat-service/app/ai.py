@@ -17,11 +17,15 @@ ROUND_TIMEOUT = 45.0
 
 
 class AIError(Exception):
-    def __init__(self, detail, code="ai_error", internal=None):
+    def __init__(self, detail, code="ai_error", internal=None, unavailable=False):
         # detail vai ao cliente; internal (causa/configuração) fica apenas no log.
+        # unavailable: o provedor não atendeu (5xx, 429, modelo ausente, timeout, transporte).
+        # Só esse tipo de falha troca de modelo e aciona o roteiro sem IA; chave, permissão,
+        # configuração e bloqueio de conteúdo não.
         super().__init__(detail)
         self.code = code
         self.internal = internal
+        self.unavailable = unavailable
 
 
 def tool(name, description, properties, required):
@@ -106,12 +110,12 @@ def respond(conversation, history, content, orders, provider, timeout, list_orde
     for _ in range(6):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise AIError("A IA demorou para concluir. Tente novamente.")
+            raise AIError("A IA demorou para concluir. Tente novamente.", "ai_timeout", unavailable=True)
         output = provider.generate(items, min(remaining, ROUND_TIMEOUT))
         elapsed = time.monotonic() - started
         logger.info("ai_round conversation_id=%s round=%s elapsed_seconds=%.2f budget_seconds=%.2f", conversation.id, _ + 1, elapsed, timeout)
         if elapsed >= timeout:
-            raise AIError(f"A IA excedeu o limite de {timeout:g} segundos. Tente novamente.")
+            raise AIError(f"A IA excedeu o limite de {timeout:g} segundos. Tente novamente.", "ai_timeout", unavailable=True)
         if not isinstance(output, list) or any(not isinstance(item, dict) for item in output):
             raise AIError("A IA retornou uma resposta inesperada. Tente novamente.")
         items.extend(output)  # Preserva também reasoning items retornados pelo provedor.

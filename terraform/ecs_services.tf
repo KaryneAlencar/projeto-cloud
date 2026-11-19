@@ -34,6 +34,15 @@ resource "aws_service_discovery_service" "internal" {
 
   # No destroy, remove o serviço mesmo que ainda haja uma task registrada.
   force_destroy = true
+
+  lifecycle {
+    # O provider relê o bloco vazio como diferente a cada plan e pede para
+    # RECRIAR o serviço do Cloud Map. Isso apagou o registro DNS da API no
+    # primeiro apply após o deploy (as tasks antigas não se registram no
+    # serviço novo) e o chat ficou sem alcançar a API. O bloco não muda depois
+    # de criado, então a diferença é ignorada.
+    ignore_changes = [health_check_custom_config]
+  }
 }
 
 locals {
@@ -291,14 +300,16 @@ module "chat" {
   stop_timeout = 170
 
   environment = {
-    PORT                = "8001"
-    WEB_CONCURRENCY     = "2"
-    ORDERS_API_URL      = local.api_internal
-    AI_PROVIDER         = var.ai_provider
-    GEMINI_MODEL        = var.gemini_model
-    APP_ORIGINS         = local.app_origin
-    COOKIE_SECURE       = tostring(local.https_enabled)
-    CREDENTIALS_VERSION = local.credentials_marker
+    PORT                   = "8001"
+    WEB_CONCURRENCY        = "2"
+    ORDERS_API_URL         = local.api_internal
+    AI_PROVIDER            = var.ai_provider
+    GEMINI_MODEL           = var.gemini_model
+    GEMINI_FALLBACK_MODELS = join(",", var.gemini_fallback_models)
+    AI_FALLBACK_COMMANDS   = tostring(var.ai_fallback_commands)
+    APP_ORIGINS            = local.app_origin
+    COOKIE_SECURE          = tostring(local.https_enabled)
+    CREDENTIALS_VERSION    = local.credentials_marker
   }
 
   secrets = {

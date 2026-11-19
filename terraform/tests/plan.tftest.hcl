@@ -119,6 +119,11 @@ run "banco_privado_e_criptografado" {
 }
 
 run "security_groups_segmentados" {
+  # Vale o padrão do código mesmo que um terraform.tfvars local libere um IP.
+  variables {
+    api_allowed_cidrs = []
+  }
+
   command = plan
 
   assert {

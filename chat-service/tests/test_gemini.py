@@ -105,20 +105,26 @@ class GeminiTests(unittest.TestCase):
         sleep.assert_called_once_with(1)
         self.assertEqual(result[-1]['content'][0]['text'], 'Olá')
 
-    def test_persistent_503_stops_after_three_attempts(self):
-        errors = [HTTPError("https://example.test", 503, "unavailable", {}, None) for _ in range(3)]
+    def test_persistent_503_stops_after_one_repetition_per_model(self):
+        provider = GeminiGenerateContent(Settings("unused", gemini_api_key="test-only-key", gemini_fallback_models=()))
+        errors = [HTTPError("https://example.test", 503, "unavailable", {}, None) for _ in range(2)]
         with patch("app.gemini.urlopen", side_effect=errors) as transport, patch("app.gemini.time.sleep") as sleep:
             with self.assertRaises(AIError) as captured:
-                self.provider.generate([], 120)
-        self.assertEqual(transport.call_count, 3)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+                provider.generate([], 120)
+        self.assertEqual(transport.call_count, 2)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1])
         self.assertEqual(captured.exception.code, 'gemini_http_503')
+        self.assertTrue(captured.exception.unavailable)
 
     def test_retry_does_not_exceed_available_deadline(self):
-        error = HTTPError("https://example.test", 503, "unavailable", {}, None)
-        with patch("app.gemini.urlopen", side_effect=error) as transport, patch("app.gemini.time.sleep") as sleep, patch("app.gemini.time.monotonic", side_effect=[0, 0, 5]):
+        provider = GeminiGenerateContent(Settings("unused", gemini_api_key="test-only-key", gemini_fallback_models=()))
+        clock = [0.0]
+        def unavailable(request, timeout):
+            clock[0] += 4.5  # A resposta 503 chegou quando faltava menos que a pausa de 1 s.
+            raise HTTPError("https://example.test", 503, "unavailable", {}, None)
+        with patch("app.gemini.urlopen", side_effect=unavailable) as transport, patch("app.gemini.time.sleep") as sleep, patch("app.gemini.time.monotonic", side_effect=lambda: clock[0]):
             with self.assertRaises(AIError):
-                self.provider.generate([], 5)
+                provider.generate([], 5)
         self.assertEqual(transport.call_count, 1)
         sleep.assert_not_called()
 
