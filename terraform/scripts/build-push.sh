@@ -27,8 +27,20 @@ if aws ecr describe-images --region "$AWS_REGION" --repository-name "$REPOSITORY
 fi
 
 echo "Autenticando o Docker em ${registry}"
-aws ecr get-login-password --region "$AWS_REGION" |
-  docker login --username AWS --password-stdin "$registry" >/dev/null
+# O Terraform roda os quatro builds em paralelo e todos gravam o mesmo
+# ~/.docker/config.json: o login é serializado para não corromper o arquivo.
+login() {
+  aws ecr get-login-password --region "$AWS_REGION" |
+    docker login --username AWS --password-stdin "$registry" >/dev/null
+}
+if command -v flock >/dev/null 2>&1; then
+  (
+    flock 9
+    login
+  ) 9>"${TMPDIR:-/tmp}/insper-eats-docker-login.lock"
+else
+  login
+fi
 
 echo "Construindo ${image}"
 # As instâncias do cluster são x86_64, mesmo quando o build roda em ARM (Mac).

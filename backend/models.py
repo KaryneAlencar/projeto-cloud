@@ -12,7 +12,7 @@ class ProdutoBase(SQLModel):
         max_digits=10,
         decimal_places=2
     )
-    estoque: int = Field(default=0, ge=0)
+    estoque: int = Field(default=0, ge=0, le=2_147_483_647)
 
 
 class Produto(ProdutoBase, table=True):
@@ -71,8 +71,8 @@ class ItemPedido(SQLModel, table=True):
 
 
 class ItemPedidoCreate(SQLModel):
-    produto_id: int = Field(gt=0)
-    quantidade: int = Field(gt=0)
+    produto_id: int = Field(gt=0, le=2_147_483_647)
+    quantidade: int = Field(gt=0, le=100_000)
 
 
 class PedidoCreate(SQLModel):

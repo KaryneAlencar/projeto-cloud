@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.main import create_app
 from app.models import Base, Conversation, Message
-from app.orders import Order, OrdersClient, OrdersError, Product
+from app.logging_setup import request_id_context
+from app.orders import NOT_REGISTERED, Order, OrdersClient, OrdersError, Product
 
 
 class TestClient(RawTestClient):
@@ -33,9 +34,13 @@ class FakeOrders:
         self.calls = []
         self.timeout_once = False
         self.reject = False
+        self.auth_failure = False
+        self.on_order = None
+        self.request_ids = []
         self.price = Decimal("8.10")
 
     def products(self):
+        self.request_ids.append(request_id_context.get())
         if self.fail:
             raise OrdersError(503, "API temporariamente indisponível")
         return [Product(id=10, nome="Brownie", preco=self.price, estoque=3)]
@@ -44,6 +49,8 @@ class FakeOrders:
         self.calls.append(dict(payload))
         if self.reject:
             raise OrdersError(409, "Estoque insuficiente", definitive=True)
+        if self.auth_failure:
+            raise OrdersError(502, NOT_REGISTERED, rejected_without_effect=True)
         key = payload["chave_idempotencia"]
         if key not in self.created:
             self.created[key] = Order(id=100 + len(self.created), status="recebido", total="16.20",
@@ -54,6 +61,8 @@ class FakeOrders:
         return self.created[key]
 
     def order(self, order_id):
+        if self.on_order:
+            self.on_order()
         if order_id != 7:
             for order in self.created.values():
                 if order.id == order_id:
@@ -128,8 +137,12 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(stranger.post(f'/chat/conversas/{cid}/confirmar', json={'compra_id': purchase_id}).status_code, 404)
             self.assertEqual(stranger.get('/chat/pedidos').json()['pedidos'], [])
             foreign_cid = stranger.post('/chat/conversas', json={}).json()['id']
+            # Modo commands: pedido de outra sessão vira resposta em texto, sem revelar dados.
             response = stranger.post(f'/chat/conversas/{foreign_cid}/mensagens', json={'conteudo': f'Pedido {order_id}', 'mensagem_id': str(uuid4())})
-            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.status_code, 200)
+            answer = response.json()['mensagens'][-1]['conteudo']
+            self.assertEqual(answer, 'Não encontrei esse pedido nesta sessão.')
+            self.assertNotIn('16', answer)
 
     def test_session_orders_include_other_owned_conversations(self):
         cid, purchase_id = self.prepared()
@@ -339,16 +352,54 @@ class ServiceTests(unittest.TestCase):
             def generate(inner, items, timeout):
                 inner.step += 1
                 if inner.step == 1:
+                    # Sem consultar o catálogo antes, preparar_compra é recusada e nada seria preparado.
+                    return [{"type": "function_call", "call_id": "catalog", "name": "listar_produtos", "arguments": "{}"}]
+                if inner.step == 2:
                     return [{"type": "function_call", "call_id": "prepare", "name": "preparar_compra", "arguments": json.dumps({"itens": [{"produto_id": 10, "quantidade": 2}], "cliente": None, "local_entrega": None})}]
+                inner.prepared = json.loads(items[-1]["output"]).get("status") == "preparando"
                 raise AIError("Falha simulada")
-        ai_client = TestClient(create_app(Settings(self.url), engine=self.new_engine(), orders=self.fake, ai=FailingAI()))
+        failing = FailingAI()
+        ai_client = TestClient(create_app(Settings(self.url), engine=self.new_engine(), orders=self.fake, ai=failing))
         with ai_client:
             cid = ai_client.post('/chat/conversas', json={}).json()['id']
             result = ai_client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Dois brownies", "mensagem_id": str(uuid4())})
             self.assertEqual(result.status_code, 503)
+            self.assertTrue(failing.prepared)  # A seleção existiu na transação antes da falha.
             current = ai_client.get(f'/chat/conversas/{cid}').json()
             self.assertIsNone(current['compra'])
             self.assertEqual(len(current['mensagens']), 1)
+
+    def test_persistent_gemini_503_after_prepare_returns_clean_error_without_partial_selection(self):
+        import io
+        import json
+        from urllib.error import HTTPError
+        def response(parts):
+            return io.BytesIO(json.dumps({"candidates": [{"finishReason": "STOP", "content": {"role": "model", "parts": parts}}]}).encode())
+        unavailable = [HTTPError("https://example.test", 503, "high demand", {}, None) for _ in range(3)]
+        responses = [
+            response([{"functionCall": {"name": "listar_produtos", "args": {}, "id": "catalog"}}]),
+            response([{"functionCall": {"name": "preparar_compra", "args": {"itens": [{"produto_id": 10, "quantidade": 2}], "cliente": "Ana", "local_entrega": "Sala 512"}, "id": "prepare"}}]),
+            *unavailable,
+        ]
+        settings = Settings(self.url, ai_provider="gemini", gemini_api_key="test-key")
+        with patch("app.gemini.urlopen", side_effect=responses) as transport, patch("app.gemini.time.sleep") as sleep:
+            with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake)) as client:
+                cid = client.post('/chat/conversas', json={}).json()['id']
+                mid = str(uuid4())
+                result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Quero dois brownies para Ana, sala 512", "mensagem_id": mid})
+                self.assertEqual(result.status_code, 503)
+                self.assertEqual(result.json()['code'], 'gemini_http_503')
+                self.assertIn('temporariamente indisponível', result.json()['detail'])
+                # A terceira chamada recebeu o resultado de uma preparação bem-sucedida.
+                sent = json.loads(transport.call_args.args[0].data)
+                prepared = sent['contents'][-1]['parts'][0]['functionResponse']['response']['result']
+                self.assertEqual(prepared['status'], 'preparando')
+                current = client.get(f'/chat/conversas/{cid}').json()
+                self.assertIsNone(current['compra'])
+                self.assertEqual(len(current['mensagens']), 1)
+        self.assertEqual(transport.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        self.assertEqual(len(self.fake.created), 0)
 
     def test_ai_recovers_invalid_fields_and_wrong_product_id_in_same_turn(self):
         import json
@@ -405,9 +456,15 @@ class ServiceTests(unittest.TestCase):
         cid, mid = self.conversation(), str(uuid4())
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(lambda _: self.send(cid, "Quero 1 brownie", mid), range(2)))
-        self.assertTrue(all(r.status_code == 200 for r in results))
-        self.assertEqual(results[0].json(), results[1].json())
-        self.assertEqual(len(results[0].json()["mensagens"]), 3)
+        # Com lock nowait, a duplicata simultânea recebe 200 (estado atual) ou 409 (ainda
+        # processando); nunca executa duas vezes. O reenvio posterior devolve o mesmo estado.
+        self.assertTrue(all(r.status_code in {200, 409} for r in results))
+        done = [r for r in results if r.status_code == 200]
+        self.assertTrue(done)
+        replay = self.send(cid, "Quero 1 brownie", mid)
+        self.assertEqual(replay.status_code, 200)
+        self.assertTrue(all(r.json() == replay.json() for r in done))
+        self.assertEqual(len(replay.json()["mensagens"]), 3)
         self.assertEqual(self.send(cid, "Outro conteúdo", mid).status_code, 409)
 
     def test_dependency_failure_rollback_and_retry(self):
@@ -428,6 +485,187 @@ class ServiceTests(unittest.TestCase):
             self.assertIsNone(session.get(Conversation, cid).chave_idempotencia)
         self.assertEqual(self.send(cid, "  ").status_code, 422)
 
+    # --- Correções da revisão ---
+
+    def ai_client(self, ai):
+        return TestClient(create_app(Settings(self.url), engine=self.new_engine(), orders=self.fake, ai=ai))
+
+    def test_ai_tool_order_not_found_keeps_turn_and_prepared_selection(self):
+        import json
+        seen = {}
+        class ScriptedAI:
+            step = 0
+            def generate(inner, items, timeout):
+                inner.step += 1
+                if inner.step == 1:
+                    return [{"type": "function_call", "call_id": "catalog", "name": "listar_produtos", "arguments": "{}"}]
+                if inner.step == 2:
+                    return [{"type": "function_call", "call_id": "prepare", "name": "preparar_compra", "arguments": json.dumps({"itens": [{"produto_id": 10, "quantidade": 2}], "cliente": "Ana", "local_entrega": "Sala 512"})},
+                            {"type": "function_call", "call_id": "order", "name": "consultar_pedido", "arguments": '{"pedido_id": 999}'}]
+                seen["order"] = json.loads(items[-1]["output"])
+                return [{"type": "message", "content": [{"type": "output_text", "text": "Não encontrei o pedido 999. Sua seleção está pronta."}]}]
+        with self.ai_client(ScriptedAI()) as client:
+            cid = client.post('/chat/conversas', json={}).json()['id']
+            result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Dois brownies e qual o status do pedido 999?", "mensagem_id": str(uuid4())})
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(seen["order"], {"erro": "Pedido não encontrado nesta sessão."})
+            self.assertEqual(result.json()['compra']['status'], 'preparando')
+            stored = client.get(f'/chat/conversas/{cid}').json()
+            self.assertEqual([m['papel'] for m in stored['mensagens']], ['assistente', 'usuario', 'assistente'])
+            self.assertEqual(stored['compra']['total'], 16.2)
+
+    def test_ai_tool_orders_api_unavailable_is_explained_not_aborted(self):
+        import json
+        seen = {}
+        class ScriptedAI:
+            step = 0
+            def generate(inner, items, timeout):
+                inner.step += 1
+                if inner.step == 1:
+                    return [{"type": "function_call", "call_id": "catalog", "name": "listar_produtos", "arguments": "{}"}]
+                seen["catalog"] = json.loads(items[-1]["output"])
+                return [{"type": "message", "content": [{"type": "output_text", "text": "Não consegui consultar o cardápio agora."}]}]
+        self.fake.fail = True
+        with self.ai_client(ScriptedAI()) as client:
+            cid = client.post('/chat/conversas', json={}).json()['id']
+            result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Ver o cardápio", "mensagem_id": str(uuid4())})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(seen["catalog"]["erro"], "A API de pedidos está indisponível agora.")
+        self.assertNotIn("temporariamente", json.dumps(seen["catalog"]))
+        self.assertEqual(len(result.json()['mensagens']), 3)
+
+    def test_commands_unknown_order_is_answered_as_text(self):
+        cid = self.conversation()
+        result = self.send(cid, "Pedido 999")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["mensagens"][-1]["conteudo"], "Não encontrei esse pedido nesta sessão.")
+        self.assertEqual(len(result.json()["mensagens"]), 3)
+
+    def test_internal_auth_failure_releases_selection_with_same_idempotency_key(self):
+        cid, purchase_id = self.prepared()
+        self.fake.auth_failure = True
+        result = self.confirm(cid, purchase_id)
+        self.assertEqual(result.status_code, 502)
+        self.assertEqual(result.json()["detail"], NOT_REGISTERED)
+        current = self.client.get(f"/chat/conversas/{cid}").json()
+        self.assertEqual(current["compra"]["status"], "preparando")
+        self.assertEqual(current["compra"]["id"], purchase_id)
+        with Session(self.engine) as session:
+            stored = session.get(Conversation, cid)
+            self.assertEqual(stored.estado, "preparando")
+            self.assertEqual(stored.chave_idempotencia, purchase_id)
+        # Não ficou presa: a conversa aceita mensagens e a mesma compra pode ser reenviada.
+        self.assertEqual(self.send(cid, "Ver o cardápio").status_code, 200)
+        self.assertEqual(self.confirm(cid, purchase_id).status_code, 502)
+        self.fake.auth_failure = False
+        confirmed = self.confirm(cid, purchase_id)
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(confirmed.json()["compra"]["status"], "confirmado")
+        self.assertEqual(len(self.fake.created), 1)
+        self.assertEqual({call["chave_idempotencia"] for call in self.fake.calls}, {purchase_id})
+        self.assertEqual(len(self.fake.calls), 3)
+
+    def test_commands_cannot_edit_confirmed_or_pending_purchase(self):
+        cid, purchase_id = self.prepared()
+        self.fake.timeout_once = True
+        self.assertEqual(self.confirm(cid, purchase_id).status_code, 503)
+        confirmed = self.confirm(cid, purchase_id).json()["compra"]
+        self.assertEqual(confirmed["status"], "confirmado")
+        for content in ("Meu nome é Mallory", "Entrega: outro lugar"):
+            result = self.send(cid, content)
+            self.assertEqual(result.status_code, 200)
+            self.assertIn("já foi registrado", result.json()["mensagens"][-1]["conteudo"])
+            self.assertEqual(result.json()["compra"], confirmed)
+        with Session(self.engine) as session:
+            self.assertEqual(session.get(Conversation, cid).compra, confirmed)
+
+    def test_control_characters_are_rejected_before_ai(self):
+        class NeverCalledAI:
+            calls = 0
+            def generate(inner, items, timeout):
+                inner.calls += 1
+                return [{"type": "message", "content": [{"type": "output_text", "text": "Olá"}]}]
+        ai = NeverCalledAI()
+        with self.ai_client(ai) as client:
+            cid = client.post('/chat/conversas', json={}).json()['id']
+            for content in ("oi\u0000", "a\u0007b", "x\u001b[31m"):
+                result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": content, "mensagem_id": str(uuid4())})
+                self.assertEqual(result.status_code, 422, repr(content))
+            self.assertEqual(ai.calls, 0)
+            self.assertEqual(len(client.get(f'/chat/conversas/{cid}').json()['mensagens']), 1)
+            ok = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "linha 1\n\tlinha 2", "mensagem_id": str(uuid4())})
+            self.assertEqual(ok.status_code, 200)
+            self.assertEqual(ai.calls, 1)
+
+    def small_pool_client(self):
+        engine = create_engine(self.url, connect_args={"options": f"-csearch_path={self.schema}"},
+                               pool_size=1, max_overflow=0, pool_timeout=0.3)
+        return engine, TestClient(create_app(Settings(self.url, ai_provider="commands"), engine=engine, orders=self.fake))
+
+    def test_full_pool_returns_503_and_health_stays_fast(self):
+        import time
+        engine, client = self.small_pool_client()
+        with client:
+            held = engine.connect()
+            try:
+                started = time.monotonic()
+                health = client.get("/health")
+                self.assertEqual(health.status_code, 200)
+                self.assertEqual(health.json()["banco"], "ok")
+                self.assertLess(time.monotonic() - started, 2)
+                # Middleware (verificação da sessão) e handler global (endpoint sem verificação).
+                for response in (client.get("/chat/pedidos"), client.post("/chat/sessao")):
+                    self.assertEqual(response.status_code, 503)
+                    self.assertEqual(response.json()["detail"], "O banco de conversas está indisponível. Tente novamente em instantes.")
+                    self.assertTrue(response.headers["x-request-id"])
+            finally:
+                held.close()
+            self.assertEqual(client.get("/chat/pedidos").status_code, 200)
+
+    def test_order_endpoints_release_connection_before_calling_orders_api(self):
+        cid, purchase_id = self.prepared()
+        order_id = self.confirm(cid, purchase_id).json()["compra"]["pedido_id"]
+        checked_out = []
+        self.fake.on_order = lambda: checked_out.append(self.engine.pool.checkedout())
+        for path in ("/chat/pedidos", f"/chat/pedidos/{order_id}", f"/chat/conversas/{cid}/pedidos"):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+        self.assertEqual(checked_out, [0, 0, 0])
+
+    def test_locked_conversation_answers_409_instead_of_waiting(self):
+        import time
+        cid = self.conversation()
+        with Session(self.engine) as holder:
+            holder.scalar(select(Conversation).where(Conversation.id == cid).with_for_update())
+            started = time.monotonic()
+            busy = self.send(cid, "Ver o cardápio")
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertEqual(busy.status_code, 409)
+            self.assertEqual(busy.json()["detail"], "Ainda estou respondendo à mensagem anterior. Aguarde um instante.")
+            holder.rollback()
+        self.assertEqual(len(self.client.get(f"/chat/conversas/{cid}").json()["mensagens"]), 1)
+        self.assertEqual(self.send(cid, "Ver o cardápio").status_code, 200)
+
+    def test_request_id_accepts_nginx_hex_and_reaches_orders_calls(self):
+        from uuid import UUID
+        raw = uuid4().hex  # 32 hexadecimais, como o $request_id do Nginx.
+        response = self.client.get("/chat/produtos", headers={"X-Request-ID": raw})
+        self.assertEqual(response.headers["x-request-id"], str(UUID(raw)))
+        self.assertEqual(self.fake.request_ids[-1], str(UUID(raw)))
+        invalid = self.client.get("/chat/produtos", headers={"X-Request-ID": "not-an-id\r\nX: y"[:9]})
+        self.assertNotEqual(invalid.headers["x-request-id"], "not-an-id")
+        UUID(invalid.headers["x-request-id"])
+
+    def test_ai_configuration_error_is_generic_for_client_and_detailed_in_log(self):
+        settings = Settings(self.url, ai_provider="gemini", gemini_api_key="")
+        with TestClient(create_app(settings, engine=self.new_engine(), orders=self.fake)) as client:
+            cid = client.post('/chat/conversas', json={}).json()['id']
+            with self.assertLogs("insper-eats-chat", level="WARNING") as logs:
+                result = client.post(f'/chat/conversas/{cid}/mensagens', json={"conteudo": "Oi", "mensagem_id": str(uuid4())})
+        self.assertEqual(result.status_code, 503)
+        self.assertEqual(result.json(), {"detail": "O assistente está indisponível no momento. Tente novamente em instantes.", "code": "gemini_not_configured"})
+        self.assertNotIn("GEMINI", result.text)
+        self.assertTrue(any("GEMINI_API_KEY" in line and "gemini_not_configured" in line for line in logs.output))
+
 
 class OrdersClientTests(unittest.TestCase):
     def test_post_uses_original_idempotency_payload(self):
@@ -441,22 +679,6 @@ class OrdersClientTests(unittest.TestCase):
         self.assertEqual(json.loads(req.data), payload)
         self.assertEqual(result.id, 7)
 
-    def test_openai_request_and_missing_configuration(self):
-        import io
-        import json
-        from app.ai import AIError, OpenAIResponses, TOOLS
-        with self.assertRaises(AIError):
-            OpenAIResponses(Settings("unused")).generate([], 1)
-        output = b'{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Oi"}]}]}'
-        settings = Settings("unused", openai_api_key="test-key", openai_model="test-model")
-        with patch("app.ai.urlopen", return_value=io.BytesIO(output)) as transport:
-            result = OpenAIResponses(settings).generate([], 1)
-        payload = json.loads(transport.call_args.args[0].data)
-        self.assertFalse(payload["store"])
-        self.assertTrue(all(tool["strict"] for tool in payload["tools"]))
-        self.assertNotIn("confirmar", [tool["name"] for tool in TOOLS])
-        self.assertEqual(result[0]["type"], "message")
-
     def test_timeout(self):
         with patch("app.orders.urlopen", side_effect=TimeoutError):
             with self.assertRaises(OrdersError) as error:
@@ -468,6 +690,55 @@ class OrdersClientTests(unittest.TestCase):
             with self.assertRaises(OrdersError) as error:
                 OrdersClient("http://localhost:8000").products()
         self.assertEqual(error.exception.status, 502)
+
+    def test_post_401_403_are_rejected_without_effect_and_logged(self):
+        from urllib.error import HTTPError
+        payload = {"cliente": "Ana", "local_entrega": "Sala 512", "chave_idempotencia": str(uuid4()), "itens": []}
+        for code in (401, 403):
+            with patch("app.orders.urlopen", side_effect=HTTPError("http://x", code, "denied", {}, None)):
+                with self.assertLogs("insper-eats-chat", level="ERROR") as logs, self.assertRaises(OrdersError) as error:
+                    OrdersClient("http://localhost:8000", internal_token="wrong").create_order(payload)
+            self.assertTrue(error.exception.rejected_without_effect)
+            self.assertFalse(error.exception.definitive)
+            self.assertEqual(error.exception.status, 502)
+            self.assertEqual(error.exception.detail, NOT_REGISTERED)
+            self.assertIn("orders_auth_failure", logs.output[0])
+            self.assertNotIn("wrong", logs.output[0])
+
+    def test_post_5xx_and_timeout_stay_uncertain_with_purchase_message(self):
+        from urllib.error import HTTPError
+        payload = {"cliente": "Ana", "local_entrega": "Sala 512", "chave_idempotencia": str(uuid4()), "itens": []}
+        for failure in (HTTPError("http://x", 500, "boom", {}, None), HTTPError("http://x", 503, "Autenticacao interna nao configurada", {}, None), TimeoutError()):
+            with patch("app.orders.urlopen", side_effect=failure):
+                with self.assertRaises(OrdersError) as error:
+                    OrdersClient("http://localhost:8000").create_order(payload)
+            self.assertFalse(error.exception.rejected_without_effect)
+            self.assertFalse(error.exception.definitive)
+            self.assertNotIn("consulta", error.exception.detail)
+        # Leitura continua com a mensagem de consulta.
+        with patch("app.orders.urlopen", side_effect=HTTPError("http://x", 500, "boom", {}, None)):
+            with self.assertRaises(OrdersError) as error:
+                OrdersClient("http://localhost:8000").order(1)
+        self.assertIn("consulta", error.exception.detail)
+
+    def test_incomplete_read_becomes_orders_error(self):
+        from http.client import IncompleteRead
+        with patch("app.orders.urlopen", side_effect=IncompleteRead(b"{")):
+            with self.assertRaises(OrdersError) as error:
+                OrdersClient("http://localhost:8000").products()
+        self.assertEqual(error.exception.status, 503)
+
+    def test_request_id_header_is_forwarded_only_when_present(self):
+        import io
+        with patch("app.orders.urlopen", side_effect=lambda *a, **k: io.BytesIO(b"[]")) as transport:
+            OrdersClient("http://localhost:8000").products()
+            self.assertIsNone(transport.call_args.args[0].get_header("X-request-id"))
+            token = request_id_context.set("11111111-2222-3333-4444-555555555555")
+            try:
+                OrdersClient("http://localhost:8000").products()
+            finally:
+                request_id_context.reset(token)
+            self.assertEqual(transport.call_args.args[0].get_header("X-request-id"), "11111111-2222-3333-4444-555555555555")
 
 
 if __name__ == "__main__":

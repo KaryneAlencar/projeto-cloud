@@ -47,6 +47,8 @@ Configure GEMINI_API_KEY e GEMINI_MODEL (AI_PROVIDER=gemini) no .env do Chat Ser
 O painel Meus pedidos reúne compras das conversas da sessão e consulta o status a cada
 10 segundos enquanto a página está visível. O cookie HttpOnly identifica o navegador;
 o cliente inicia a sessão e envia o token CSRF nas alterações automaticamente.
+Se a sessão expirar (401) ou o token CSRF ficar desatualizado (403 em uma alteração,
+por exemplo após outra aba renovar a sessão), o cliente renova a sessão e repete uma vez.
 Histórico antigo sem proprietário exige recuperação administrativa, descrita em
 ../docs/IMPLANTACAO.md. Para execução conjunta em containers, consulte ../README.md.
 Não há fallback silencioso para demonstração em caso de falha da API.
@@ -72,7 +74,7 @@ Os endpoints abaixo retornam a conversa completa no formato descrito a seguir. A
 {
   "id": "uuid-conversa",
   "mensagens": [
-    {"id":"uuid-mensagem","papel":"assistente","conteudo":"Confira seu resumo."}
+    {"id":"uuid-mensagem","papel":"assistente","conteudo":"Confira seu resumo.","criado_em":"2026-01-01T12:00:00+00:00"}
   ],
   "compra": {
     "id":"uuid-da-selecao",

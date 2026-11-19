@@ -24,9 +24,17 @@ ORDERS_API_TIMEOUT=5
 ORDERS_INTERNAL_TOKEN=MESMO_VALOR_DA_API
 AI_PROVIDER=gemini
 GEMINI_API_KEY=SUA_CHAVE_LOCAL
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
 AI_TIMEOUT=120
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=10
 ```
+
+`DB_POOL_SIZE` (padrão 5) e `DB_MAX_OVERFLOW` (padrão 10) definem o pool de conexões por
+processo: no máximo 15 conexões simultâneas ao PostgreSQL com os padrões. Se o pool estiver
+cheio por 5 segundos (`pool_timeout`), a requisição recebe 503 com mensagem genérica em vez
+de ficar na fila. Dimensione `processos x (DB_POOL_SIZE + DB_MAX_OVERFLOW)` abaixo do
+`max_connections` do banco, reservando uma conexão por processo para o /health.
 
 Crie sua chave em https://aistudio.google.com/apikey e coloque-a somente no .env local.
 O modelo é configurável e precisa estar disponível na conta do provedor.
@@ -35,13 +43,18 @@ Confira disponibilidade e cotas no Google AI Studio: https://ai.google.dev/gemin
 Conteúdo da faixa gratuita pode ser usado para melhorar produtos do Google; use dados fictícios
 na demonstração e confira os termos do provedor antes de usar conversas com dados pessoais.
 Sem chave/modelo, o serviço inicia e /health informa ia_configurada=false;
-a mensagem enviada à IA retorna 503 com orientação para configurar. Não existe
+a mensagem enviada à IA retorna 503 com texto genérico ("O assistente está indisponível
+no momento...") e um `code` (por exemplo gemini_not_configured, gemini_http_401,
+gemini_http_404). A orientação de configuração (chave, modelo, cota) aparece somente no
+log `ai_dependency_failure`, nunca no navegador. Não existe
 fallback silencioso para respostas simuladas. Reinicie após alterar o `.env`.
 `AI_PROVIDER=commands` permite testar comandos explícitos sem chamada à IA,
 mas as compras desse modo também são REAIS após clicar em Confirmar pedido.
 
 Abra http://127.0.0.1:8001/docs e http://127.0.0.1:8001/health.
 A saúde verifica o banco; não faz chamada paga à IA nem teste de disponibilidade do provedor.
+O /health abre uma conexão própria, fora do pool (connect_timeout de 2 s), para responder
+rápido mesmo quando o pool está ocupado com conversas em andamento.
 Mantenha PostgreSQL e a API da Pessoa 1 em execução. Na raiz do repositório,
 `docker compose up -d db` inicia o banco configurado no compose existente.
 
@@ -78,13 +91,16 @@ seleção e resultados das ferramentas são enviados ao provedor de IA. Não col
 nas conversas. Chaves não são enviadas ao frontend nem registradas em logs.
 A conversa completa permanece no PostgreSQL. Se a IA falhar após preparar uma seleção,
 a transação local é revertida: nenhuma preparação parcial é persistida.
+Falha da API de pedidos DENTRO de uma ferramenta (pedido inexistente, API indisponível)
+não derruba a requisição: a IA recebe {"erro": ...} como resultado e explica ao usuário;
+a mensagem e uma preparação feita no mesmo turno são mantidas.
 
 Referência da implementação: https://ai.google.dev/api/generate-content
 Ferramentas: https://ai.google.dev/gemini-api/docs/function-calling
 
-OpenAI continua como alternativa opcional: defina AI_PROVIDER=openai, OPENAI_API_KEY e
-OPENAI_MODEL. Não há fallback automático entre provedores. A propriedade ia_configurada
-do /health verifica apenas a presença de chave/modelo do provedor selecionado, sem
+AI_PROVIDER aceita somente gemini ou commands; outro valor impede a inicialização com
+mensagem de configuração. Não há outro provedor nem fallback automático. A propriedade
+ia_configurada do /health verifica apenas a presença de chave/modelo do Gemini, sem
 chamada externa. O status não comprova validade da chave ou saldo/cota.
 
 ## Confirmação segura
@@ -105,6 +121,13 @@ Confirmações concorrentes são serializadas por bloqueio de linha PostgreSQL. 
 registrado, repetições retornam a conversa sem novo POST. Respostas definitivas 400/404/
 409/422 da API recusam a tentativa e liberam uma nova versão para revisão. O número,
 status, preços e total definitivo do pedido vêm da resposta real da API.
+
+401/403 em POST /pedidos (ORDERS_INTERNAL_TOKEN ausente ou diferente) são recusas
+anteriores a qualquer efeito: o chat registra `orders_auth_failure` em nível ERROR,
+responde 502 ("Não foi possível registrar o pedido agora. Nada foi cobrado nem
+reservado...") e devolve a seleção para preparando com o MESMO compra_id e a mesma
+chave de idempotência. Não fica presa em confirmando; confirmar de novo reenvia o pedido.
+Erros 5xx (inclusive o 503 da API sem token configurado) e timeouts seguem incertos.
 
 A API existente calcula preços dentro da sua própria transação. A consulta prévia reduz
 mudanças inesperadas, mas não fornece garantia transacional de preço entre a consulta
@@ -132,6 +155,16 @@ Evoluções futuras de colunas precisarão de migrações.
 | POST | /chat/conversas/{id}/mensagens | conteudo e mensagem_id UUID |
 | POST | /chat/conversas/{id}/confirmar | Confirma versão da seleção |
 
+O conteúdo da mensagem não aceita caracteres de controle (NUL etc.; quebra de linha e
+tabulação são permitidas): a resposta é 422 antes de qualquer chamada à IA. Enquanto uma
+mensagem da conversa ainda está sendo processada, outra mensagem para a mesma conversa
+recebe 409 ("Ainda estou respondendo à mensagem anterior...") em vez de esperar o bloqueio;
+basta reenviar com o mesmo mensagem_id. Falha de conexão/pool do banco responde 503 genérico.
+
+O X-Request-ID recebido (UUID ou os 32 hexadecimais do `$request_id` do Nginx, normalizado
+para UUID) é devolvido na resposta, gravado nos logs e repassado em todas as chamadas à
+API de pedidos.
+
 Mensagens duplicadas não são executadas novamente e retornam o estado ATUAL da conversa,
 evita-se ressuscitar uma seleção antiga após confirmação. Mesmo ID com outro texto retorna
 409. O contrato da interface usa status preparando, confirmando e confirmado. confirmado
@@ -139,6 +172,8 @@ significa compra registrada; pedido_status contém o status real retornado pelo 
 
 No modo commands: 'Ver o cardápio', 'Quero 2 brownies', 'Selecionar 1:2, 2:1',
 'Meu nome é Ana', 'Entrega: sala 512, prédio 2', 'Pedido 4' e 'cancelar'.
+Nome e entrega só alteram uma seleção em preparando; pedido já registrado ou com
+confirmação pendente não é alterado. 'Pedido N' inexistente na sessão responde em texto.
 
 ## Testes
 
@@ -166,7 +201,7 @@ Consulte ../docs/IMPLANTACAO.md para rede, segredos e recuperação do históric
 ## Teste com prazo maior
 
 AI_TIMEOUT=120 define o orçamento total do ciclo de ferramentas da IA, não 120 segundos por chamada.
-Cada rodada recebe somente o tempo restante. O frontend e o proxy local aguardam até 150 segundos.
+Cada rodada recebe o tempo restante, limitado a 45 segundos por rodada. O frontend e o proxy local aguardam até 150 segundos.
 As consultas da API de pedidos preservam seu limite independente ORDERS_API_TIMEOUT=5.
 Reinicie o Chat Service e o Vite após alterar a configuração. Os logs ai_round registram
 round, elapsed_seconds e budget_seconds para comparar o tempo das etapas sem mostrar conteúdo

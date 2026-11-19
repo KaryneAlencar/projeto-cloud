@@ -193,8 +193,8 @@ run "cluster_e_capacity_provider" {
   }
 
   assert {
-    condition     = aws_autoscaling_group.ecs.min_size == 0 && aws_autoscaling_group.ecs.max_size == 4 && aws_autoscaling_group.ecs.protect_from_scale_in
-    error_message = "O ASG deve ir de 0 a 4 instâncias, com proteção de scale-in."
+    condition     = aws_autoscaling_group.ecs.min_size == 0 && aws_autoscaling_group.ecs.max_size == 10 && aws_autoscaling_group.ecs.protect_from_scale_in
+    error_message = "O ASG deve ir de 0 a 10 instâncias, com proteção de scale-in."
   }
 
   assert {
@@ -207,7 +207,7 @@ run "cluster_e_capacity_provider" {
       aws_ecs_capacity_provider.ec2.auto_scaling_group_provider[0].managed_termination_protection == "ENABLED" &&
       aws_ecs_capacity_provider.ec2.auto_scaling_group_provider[0].managed_draining == "ENABLED" &&
       aws_ecs_capacity_provider.ec2.auto_scaling_group_provider[0].managed_scaling[0].target_capacity == 100 &&
-      aws_ecs_capacity_provider.ec2.auto_scaling_group_provider[0].managed_scaling[0].maximum_scaling_step_size == 2 &&
+      aws_ecs_capacity_provider.ec2.auto_scaling_group_provider[0].managed_scaling[0].maximum_scaling_step_size == 4 &&
       aws_ecs_capacity_provider.ec2.auto_scaling_group_provider[0].managed_scaling[0].instance_warmup_period == 300
     )
     error_message = "Managed scaling, termination protection e draining devem seguir o ambiente validado."
@@ -227,21 +227,28 @@ run "servicos_ecs" {
 
   assert {
     condition = alltrue([
-      for service in [module.api.service, module.worker.service] :
+      for service in [module.api.service, module.worker.service, module.chat.service, module.frontend.service] :
       one(service.placement_constraints).type == "distinctInstance" &&
       [for strategy in service.ordered_placement_strategy : "${strategy.type}:${strategy.field}"] == ["spread:attribute:ecs.availability-zone", "binpack:memory"]
     ])
-    error_message = "API e worker: spread por AZ, binpack por memória e distinctInstance."
+    error_message = "Os quatro serviços: spread por AZ, binpack por memória e distinctInstance."
   }
 
   assert {
-    condition     = one(module.api.service.capacity_provider_strategy).capacity_provider == "insper-eats-sp-ecs-capacity-provider"
-    error_message = "A API deve usar o Capacity Provider EC2."
+    condition = alltrue([
+      for service in [module.api.service, module.worker.service, module.chat.service, module.frontend.service] :
+      one(service.capacity_provider_strategy).capacity_provider == "insper-eats-sp-ecs-capacity-provider"
+    ])
+    error_message = "Os quatro serviços devem usar o Capacity Provider EC2."
   }
 
   assert {
-    condition     = one(module.chat.service.capacity_provider_strategy).capacity_provider == "FARGATE" && one(module.frontend.service.capacity_provider_strategy).capacity_provider == "FARGATE"
-    error_message = "Chat e frontend devem rodar em Fargate."
+    condition = alltrue([
+      for service in [module.api, module.worker, module.chat, module.frontend] :
+      !contains([for strategy in service.service.capacity_provider_strategy : strategy.capacity_provider], "FARGATE") &&
+      length(service.requires_compatibilities) == 1 && contains(service.requires_compatibilities, "EC2")
+    ])
+    error_message = "Nenhum serviço pode usar Fargate: o enunciado exige ECS sobre EC2."
   }
 
   assert {
@@ -424,6 +431,8 @@ run "observabilidade" {
       "insper-eats-sp-api-tasks-low",
       "insper-eats-sp-worker-tasks-low",
       "insper-eats-sp-chat-tasks-low",
+      "insper-eats-sp-frontend-tasks-low",
+      "insper-eats-sp-alb-5xx",
       "insper-eats-sp-dlq-messages",
       "insper-eats-sp-cluster-capacity-high",
       "insper-eats-sp-asg-at-max",
@@ -448,7 +457,7 @@ run "observabilidade" {
 
   assert {
     condition = (
-      aws_cloudwatch_metric_alarm.asg_at_max.threshold == 4 &&
+      aws_cloudwatch_metric_alarm.asg_at_max.threshold == 10 &&
       aws_cloudwatch_metric_alarm.asg_at_max.dimensions["AutoScalingGroupName"] == "insper-eats-sp-ecs-asg" &&
       contains(aws_autoscaling_group.ecs.enabled_metrics, "GroupInServiceInstances")
     )

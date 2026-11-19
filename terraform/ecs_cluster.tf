@@ -69,6 +69,10 @@ resource "aws_launch_template" "ecs" {
   user_data = base64encode(<<-EOT
     #!/bin/bash
     echo "ECS_CLUSTER=${aws_ecs_cluster.main.name}" >> /etc/ecs/ecs.config
+    # Tasks awsvpc não alcançam o IMDS: sem isso, um contêiner comprometido
+    # obteria as credenciais do papel da instância. Cada task usa só a sua
+    # task role, entregue pelo endpoint de credenciais do ECS.
+    echo "ECS_AWSVPC_BLOCK_IMDS=true" >> /etc/ecs/ecs.config
   EOT
   )
 
@@ -156,7 +160,9 @@ resource "aws_ecs_capacity_provider" "ec2" {
       status                    = "ENABLED"
       target_capacity           = 100
       minimum_scaling_step_size = 1
-      maximum_scaling_step_size = 2
+      # 4 por rodada: o primeiro apply sai de 0 para as 4 instâncias de repouso
+      # de uma vez, em vez de duas rodadas de alarme + boot.
+      maximum_scaling_step_size = 4
       instance_warmup_period    = 300
     }
   }

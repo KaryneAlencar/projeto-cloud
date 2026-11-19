@@ -244,9 +244,9 @@ variable "ecs_instance_type" {
 }
 
 variable "ecs_asg_max_size" {
-  description = "Máximo de instâncias EC2 no Auto Scaling Group."
+  description = "Máximo de instâncias EC2 no Auto Scaling Group. Cada instância comporta 2 tasks awsvpc e réplicas do mesmo serviço não dividem instância: 4 serviços x 2 tasks ocupam 4 instâncias; com todos em 4 tasks, 8. As 2 restantes são a folga para um rolling deployment (200%) com a frota no pico."
   type        = number
-  default     = 4
+  default     = 10
 }
 
 variable "service_min_count" {
@@ -340,7 +340,7 @@ variable "gemini_api_key_version" {
 variable "gemini_model" {
   description = "Modelo Gemini usado pelo chat."
   type        = string
-  default     = "gemini-2.5-flash"
+  default     = "gemini-3.8-flash"
 }
 
 # ---------------------------------------------------------------------------

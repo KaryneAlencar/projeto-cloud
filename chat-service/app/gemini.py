@@ -2,6 +2,7 @@
 import json
 import logging
 import time
+from http.client import HTTPException as HTTPClientError
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -10,6 +11,9 @@ from uuid import uuid4
 from .ai import AIError, INSTRUCTIONS, TOOLS
 
 logger = logging.getLogger("insper-eats-chat")
+
+# Chave, modelo e configuração são assunto do operador: o detalhe fica só no log.
+UNAVAILABLE = "O assistente está indisponível no momento. Tente novamente em instantes."
 
 
 class GeminiGenerateContent:
@@ -75,7 +79,7 @@ class GeminiGenerateContent:
 
     def generate(self, items, timeout):
         if not self.settings.gemini_api_key or not self.settings.gemini_model:
-            raise AIError("Configure GEMINI_API_KEY e GEMINI_MODEL no .env do Chat Service.")
+            raise AIError(UNAVAILABLE, "gemini_not_configured", internal="Configure GEMINI_API_KEY e GEMINI_MODEL no .env do Chat Service.")
         model = quote(self.settings.gemini_model.removeprefix("models/"), safe="")
         req = Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                       data=json.dumps(self.payload(items)).encode(),
@@ -86,15 +90,18 @@ class GeminiGenerateContent:
             if exc.code in {500, 502, 503, 504}:
                 raise AIError("O Gemini está temporariamente indisponível, mesmo após novas tentativas. Tente novamente em instantes.", f"gemini_http_{exc.code}") from exc
             if exc.code == 429:
-                raise AIError("Limite de uso do Gemini atingido. Aguarde e confira a cota no Google AI Studio.", "gemini_http_429") from exc
+                raise AIError("Limite de uso do assistente atingido. Aguarde alguns instantes e tente novamente.", "gemini_http_429", internal="Cota do Gemini atingida. Confira a cota no Google AI Studio.") from exc
             if exc.code in {401, 403}:
-                raise AIError("O Gemini recusou a chave ou o acesso. Confira GEMINI_API_KEY e as permissões do projeto.", f"gemini_http_{exc.code}") from exc
+                raise AIError(UNAVAILABLE, f"gemini_http_{exc.code}", internal="O Gemini recusou a chave ou o acesso. Confira GEMINI_API_KEY e as permissões do projeto.") from exc
             if exc.code == 404:
-                raise AIError("Modelo Gemini não disponível. Confira GEMINI_MODEL no Google AI Studio.", "gemini_http_404") from exc
-            raise AIError("O Gemini não conseguiu atender. Confira o modelo/configuração ou tente novamente.", f"gemini_http_{exc.code}") from exc
+                raise AIError(UNAVAILABLE, "gemini_http_404", internal="Modelo Gemini não disponível. Confira GEMINI_MODEL no Google AI Studio.") from exc
+            raise AIError(UNAVAILABLE, f"gemini_http_{exc.code}", internal="O Gemini não conseguiu atender. Confira o modelo/configuração.") from exc
         except TimeoutError as exc:
             raise AIError("O Gemini excedeu o tempo de espera desta etapa. Tente novamente.", "gemini_timeout") from exc
-        except (URLError, OSError, ValueError) as exc:
+        except (URLError, OSError, ValueError, HTTPClientError) as exc:
+            # Timeout na conexão chega embrulhado em URLError; no corpo, como TimeoutError direto.
+            if isinstance(getattr(exc, "reason", None), TimeoutError):
+                raise AIError("O Gemini excedeu o tempo de espera desta etapa. Tente novamente.", "gemini_timeout") from exc
             raise AIError("O Gemini está indisponível ou retornou dados inválidos. Tente novamente.", "gemini_transport_error") from exc
 
         try:

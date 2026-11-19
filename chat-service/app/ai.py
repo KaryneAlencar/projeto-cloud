@@ -1,21 +1,27 @@
-"""Responses API com execução local de ferramentas validadas, sem ferramenta de compra."""
+"""Ciclo de ferramentas da IA, independente de provedor: schemas (TOOLS), instruções,
+execução local validada e orçamento total de tempo. Não há ferramenta de compra.
+O adaptador do provedor (app/gemini.py) traduz estes itens para a API nativa."""
 import json
 import logging
 import time
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from pydantic import ValidationError
 
+from .orders import OrdersError
 from .purchases import Delivery, Selection, delivery, prepare
 
 logger = logging.getLogger("insper-eats-chat")
 
+# Teto de cada rodada do provedor: uma única chamada não consome o orçamento inteiro.
+ROUND_TIMEOUT = 45.0
+
 
 class AIError(Exception):
-    def __init__(self, detail, code="ai_error"):
+    def __init__(self, detail, code="ai_error", internal=None):
+        # detail vai ao cliente; internal (causa/configuração) fica apenas no log.
         super().__init__(detail)
         self.code = code
+        self.internal = internal
 
 
 def tool(name, description, properties, required):
@@ -62,29 +68,6 @@ Se uma ferramenta falhar, explique e solicite correção. Não trate um erro com
 """
 
 
-class OpenAIResponses:
-    def __init__(self, settings):
-        self.settings = settings
-
-    def generate(self, items, timeout):
-        if not self.settings.openai_api_key or not self.settings.openai_model:
-            raise AIError("Configure OPENAI_API_KEY e OPENAI_MODEL no .env do Chat Service.")
-        payload = {"model": self.settings.openai_model, "instructions": INSTRUCTIONS, "input": items,
-                   "tools": TOOLS, "parallel_tool_calls": False, "store": False, "max_output_tokens": 1200}
-        req = Request("https://api.openai.com/v1/responses", data=json.dumps(payload).encode(),
-                      headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.settings.openai_api_key}"})
-        try:
-            with urlopen(req, timeout=timeout) as response:
-                data = json.load(response)
-            if data.get("status") != "completed" or not isinstance(data.get("output"), list):
-                raise AIError("A IA não concluiu a resposta. Tente novamente.")
-            return data["output"]
-        except HTTPError as exc:
-            raise AIError("A IA recusou a solicitação. Confira chave, modelo e limite de uso no provedor.") from exc
-        except (URLError, TimeoutError, OSError, ValueError) as exc:
-            raise AIError("A IA está indisponível ou retornou uma resposta inválida. Tente novamente.") from exc
-
-
 def execute_tool(conversation, name, arguments, orders, list_orders=None):
     if not isinstance(arguments, dict):
         raise ValueError("Argumentos devem ser um objeto.")
@@ -124,7 +107,7 @@ def respond(conversation, history, content, orders, provider, timeout, list_orde
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise AIError("A IA demorou para concluir. Tente novamente.")
-        output = provider.generate(items, remaining)
+        output = provider.generate(items, min(remaining, ROUND_TIMEOUT))
         elapsed = time.monotonic() - started
         logger.info("ai_round conversation_id=%s round=%s elapsed_seconds=%.2f budget_seconds=%.2f", conversation.id, _ + 1, elapsed, timeout)
         if elapsed >= timeout:
@@ -163,6 +146,14 @@ def respond(conversation, history, content, orders, provider, timeout, list_orde
                           for error in exc.errors(include_input=False, include_url=False)]
                 logger.warning("ai_tool_invalid_arguments conversation_id=%s tool=%s fields=%s", conversation.id, call["name"], fields)
                 result = {"erro": "Argumentos inválidos. Corrija os campos e repita a ferramenta agora.", "campos": fields}
+            except OrdersError as exc:
+                # Falha da API de pedidos é resultado da ferramenta, não da requisição:
+                # a IA explica e o turno (mensagem + preparação) é preservado.
+                logger.warning("ai_tool_orders_failure conversation_id=%s tool=%s status=%s", conversation.id, call["name"], exc.status)
+                if exc.status == 404:
+                    result = {"erro": exc.detail}
+                else:
+                    result = {"erro": "A API de pedidos está indisponível agora.", "orientacao": "Explique ao usuário que a consulta não pôde ser feita e peça para tentar novamente em instantes. Não invente dados."}
             except json.JSONDecodeError:
                 result = {"erro": "Os argumentos precisam ser JSON válido. Corrija e repita a ferramenta agora."}
             except ValueError as exc:

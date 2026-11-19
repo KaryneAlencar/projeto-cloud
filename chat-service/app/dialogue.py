@@ -4,6 +4,7 @@ import unicodedata
 from decimal import Decimal
 
 from .models import new_id
+from .orders import OrdersError
 
 
 def normalized(text):
@@ -22,7 +23,12 @@ def reply(conversation, text, orders):
 
     match = re.fullmatch(r"(?:consultar\s+)?pedido\s*#?\s*(\d+)", content)
     if match:
-        order = orders.order(int(match[1]))
+        try:
+            order = orders.order(int(match[1]))
+        except OrdersError as exc:
+            if exc.status != 404:
+                raise
+            return "Não encontrei esse pedido nesta sessão."
         return f"Pedido #{order.id}: {order.status}. Total: R$ {order.total:.2f}."
 
     if any(term in content for term in ("cardapio", "catalogo", "disponive", "preco")):
@@ -78,6 +84,10 @@ def reply(conversation, text, orders):
     if name or address:
         if not conversation.compra:
             return "Selecione os produtos antes de informar os dados de entrega."
+        if conversation.compra["status"] != "preparando":
+            if conversation.compra["status"] == "confirmando":
+                return "Há uma confirmação pendente. Use Repetir confirmação antes de alterar os dados."
+            return "Esse pedido já foi registrado e não pode mais ser alterado. Faça uma nova seleção para outro pedido."
         value = (name or address)[1].strip()
         if len(value) < (2 if name else 3):
             return "Informe um nome ou local de entrega válido."

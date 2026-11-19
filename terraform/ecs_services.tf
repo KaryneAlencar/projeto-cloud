@@ -1,10 +1,10 @@
 # Os quatro serviços da aplicação.
 #
-# API e worker rodam em EC2 pelo Capacity Provider, como no ambiente validado
-# em Ohio. Frontend e chat rodam em Fargate: uma t3.medium só comporta duas
-# tasks awsvpc (3 ENIs), e as duas vagas de cada instância já são da API e do
-# worker. Em Fargate, os serviços novos não disputam essas vagas nem alteram o
-# comportamento de escala das instâncias.
+# Todos rodam em instâncias EC2 pelo mesmo Capacity Provider; nenhum usa
+# Fargate. Uma t3.medium só comporta duas tasks awsvpc (3 ENIs) e o módulo
+# impõe distinctInstance por serviço: com 4 serviços de 2 tasks são 4
+# instâncias em repouso, e até 8 com todos em 4 tasks; o máximo do ASG é 10
+# para sobrar vaga a um deployment no pico (ver ecs_asg_max_size).
 
 # --- Descoberta de serviços (Cloud Map) ------------------------------------
 
@@ -31,6 +31,9 @@ resource "aws_service_discovery_service" "internal" {
 
   # O ECS mantém o registro de cada task conforme o health check do contêiner.
   health_check_custom_config {}
+
+  # No destroy, remove o serviço mesmo que ainda haja uma task registrada.
+  force_destroy = true
 }
 
 locals {
@@ -143,6 +146,9 @@ module "worker" {
     AWS_REGION          = var.region
     SQS_QUEUE_NAME      = aws_sqs_queue.orders.name
     CREDENTIALS_VERSION = local.credentials_marker
+    # O worker usa uma conexão por vez; pool pequeno poupa conexões do RDS.
+    DB_POOL_SIZE    = "2"
+    DB_MAX_OVERFLOW = "1"
   }
 
   secrets     = { DATABASE_URL = aws_secretsmanager_secret.database_url.arn }
@@ -155,12 +161,11 @@ module "worker" {
       Sid    = "OrdersQueue"
       Effect = "Allow"
       Action = [
+        # Só as quatro chamadas que backend/worker.py faz.
         "sqs:GetQueueUrl",
-        "sqs:GetQueueAttributes",
         "sqs:SendMessage",
         "sqs:ReceiveMessage",
         "sqs:DeleteMessage",
-        "sqs:ChangeMessageVisibility",
       ]
       Resource = aws_sqs_queue.orders.arn
     }]
@@ -271,8 +276,8 @@ module "chat" {
   cluster_arn    = aws_ecs_cluster.main.arn
   cluster_name   = aws_ecs_cluster.main.name
 
-  launch_type       = "FARGATE"
-  capacity_provider = "FARGATE"
+  launch_type       = "EC2"
+  capacity_provider = aws_ecs_capacity_provider.ec2.name
 
   image          = local.image_uris["chat"]
   container_port = 8001
@@ -281,8 +286,9 @@ module "chat" {
 
   memory_reservation = var.task_memory_reservation
 
-  # O chat encerra requisições em andamento por até 160 s; o ECS permite 120.
-  stop_timeout = 120
+  # O chat encerra requisições em andamento por até 160 s (uvicorn
+  # --timeout-graceful-shutdown). Em EC2 não há o teto de 120 s do Fargate.
+  stop_timeout = 170
 
   environment = {
     PORT                = "8001"
@@ -346,8 +352,8 @@ module "frontend" {
   cluster_arn    = aws_ecs_cluster.main.arn
   cluster_name   = aws_ecs_cluster.main.name
 
-  launch_type       = "FARGATE"
-  capacity_provider = "FARGATE"
+  launch_type       = "EC2"
+  capacity_provider = aws_ecs_capacity_provider.ec2.name
 
   image          = local.image_uris["frontend"]
   container_port = 8080

@@ -1,4 +1,9 @@
+"""Dois pedidos simultâneos para o mesmo produto (teste manual de concorrência).
 
+Uso: ORDERS_INTERNAL_TOKEN=... python3 scripts/teste_concorrencia.py
+API_URL muda o endereço da API (padrão http://127.0.0.1:8002, a porta do compose local).
+Na AWS, terraform/scripts/verify_deploy.py cobre o mesmo cenário.
+"""
 import json
 import os
 import uuid
@@ -7,7 +12,9 @@ from threading import Barrier
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
-URL = "http://127.0.0.1:8000/pedidos"
+URL = os.getenv("API_URL", "http://127.0.0.1:8002").rstrip("/") + "/pedidos"
+# /pedidos exige o mesmo token configurado na API; o padrão é o do compose local.
+TOKEN = os.getenv("ORDERS_INTERNAL_TOKEN") or "insper-eats-local-only"
 
 # Sincroniza as duas requisições
 barreira = Barrier(3)
@@ -31,8 +38,7 @@ def criar_pedido(cliente):
         data=json.dumps(dados).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            # /pedidos exige o mesmo token configurado na API.
-            "X-Internal-Token": os.environ["ORDERS_INTERNAL_TOKEN"]
+            "X-Internal-Token": TOKEN
         },
         method="POST"
     )

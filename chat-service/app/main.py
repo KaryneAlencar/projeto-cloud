@@ -6,29 +6,42 @@ import time
 from fastapi import FastAPI, HTTPException, Path, Request, Response
 from starlette.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, TimeoutError as PoolTimeoutError
 
 from .config import Settings
 from .logging_setup import configure_logging, request_id_context
-from .ai import AIError, OpenAIResponses, respond
+from .ai import AIError, respond
 from .gemini import GeminiGenerateContent
 from .checkout import confirm_purchase
-from .database import connect_database
+from .database import connect_database, connect_health
 from .dialogue import reply
 from .models import Base, Conversation, ConversationAccess, Message, MessageRequest, BrowserSession, now
 from .orders import OrdersClient, OrdersError
 from .presentation import customer_message
-from .order_history import list_conversation_orders, list_browser_orders, OwnedOrdersClient
+from .order_history import (BROWSER_SCOPE, CONVERSATION_SCOPE, OwnedOrdersClient, conversation_order_ids,
+                            fetch_orders, list_browser_orders, owned_order_ids)
 from .security import owner_context, start_session, verify_request
 
 logger = logging.getLogger("insper-eats-chat")
+
+DATABASE_UNAVAILABLE = "O banco de conversas está indisponível. Tente novamente em instantes."
+BUSY = "Ainda estou respondendo à mensagem anterior. Aguarde um instante."
 
 
 class IncomingMessage(BaseModel):
     conteudo: str = Field(min_length=1, max_length=2000)
     mensagem_id: UUID
+
+    @field_validator("conteudo")
+    @classmethod
+    def no_control_characters(cls, value):
+        # NUL não é aceito pelo PostgreSQL (o INSERT falharia depois de a IA ser chamada);
+        # os demais caracteres de controle não são texto. Quebra de linha e tabulação passam.
+        if any((ord(c) < 32 and c not in "\n\r\t") or 127 <= ord(c) < 160 for c in value):
+            raise ValueError("A mensagem contém caracteres de controle inválidos.")
+        return value
 
 
 class Confirmation(BaseModel):
@@ -54,7 +67,9 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
         from sqlalchemy.orm import sessionmaker
         database, sessions = engine, sessionmaker(engine, expire_on_commit=False)
     client = orders or OrdersClient(settings.orders_api_url, settings.orders_timeout, settings.orders_internal_token)
-    provider = ai or (GeminiGenerateContent(settings) if settings.ai_provider == "gemini" else OpenAIResponses(settings))
+    provider = ai or GeminiGenerateContent(settings)  # Não é chamado no modo commands.
+    # /health usa conexão própria, fora do pool: responde mesmo com o pool ocupado.
+    health_database = connect_health(settings.database_url)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -65,6 +80,7 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
             Base.metadata.create_all(connection)
         yield
         database.dispose()
+        health_database.dispose()
 
     app = FastAPI(title="Insper Eats Chat Service", version="0.1.0", lifespan=lifespan)
 
@@ -86,8 +102,9 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
                     response.headers["X-Request-ID"] = request_id
                     response.headers["Cache-Control"] = "no-store"
                     return response
-                except OperationalError:
-                    response = JSONResponse(status_code=503, content={"detail": "O banco de conversas está indisponível. Tente novamente em instantes."})
+                except (OperationalError, PoolTimeoutError) as exc:
+                    logger.error("database_unavailable error=%s", type(exc).__name__)
+                    response = JSONResponse(status_code=503, content={"detail": DATABASE_UNAVAILABLE})
                     response.headers["X-Request-ID"] = request_id
                     return response
                 owner_token = owner_context.set(owner)
@@ -120,15 +137,30 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
 
     @app.exception_handler(AIError)
     async def ai_failure(_request: Request, exc: AIError):
-        logger.warning("ai_dependency_failure code=%s reason=%s", exc.code, str(exc))
+        # O detalhe interno (chave/modelo/configuração) fica só no log; o cliente recebe str(exc).
+        logger.warning("ai_dependency_failure code=%s reason=%s", exc.code, exc.internal or str(exc))
         return JSONResponse(status_code=503, content={"detail": str(exc), "code": exc.code})
 
-    def find_conversation(session, conversation_id, *, lock=False):
+    async def database_failure(_request: Request, exc: Exception):
+        # Conexão/pool: sem detalhes do driver para o cliente.
+        logger.error("database_unavailable error=%s", type(exc).__name__)
+        return JSONResponse(status_code=503, content={"detail": DATABASE_UNAVAILABLE})
+
+    app.add_exception_handler(OperationalError, database_failure)
+    app.add_exception_handler(PoolTimeoutError, database_failure)
+
+    def find_conversation(session, conversation_id, *, lock=False, nowait=False):
         statement = select(Conversation).join(ConversationAccess, ConversationAccess.conversa_id == Conversation.id).where(
             Conversation.id == str(conversation_id), ConversationAccess.sessao_hash == owner_context.get())
         if lock:
-            statement = statement.with_for_update()
-        conversation = session.scalar(statement)
+            statement = statement.with_for_update(nowait=nowait)
+        try:
+            conversation = session.scalar(statement)
+        except OperationalError as exc:
+            # 55P03 = lock_not_available: outra requisição ainda processa esta conversa.
+            if nowait and getattr(exc.orig, "sqlstate", None) == "55P03":
+                raise HTTPException(409, BUSY) from exc
+            raise
         if conversation is None:
             raise HTTPException(404, "Conversa não encontrada.")
         return conversation
@@ -136,8 +168,8 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
     @app.get("/health")
     def health():
         try:
-            with sessions() as session:
-                session.execute(text("SELECT 1"))
+            with health_database.connect() as connection:
+                connection.execute(text("SELECT 1"))
         except Exception:
             return JSONResponse(status_code=503, content={"status": "indisponivel", "banco": "indisponivel"})
         return {"status": "ok", "banco": "ok", "modo": settings.ai_provider,
@@ -149,13 +181,18 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
 
     @app.get("/chat/pedidos/{pedido_id}")
     def order(pedido_id: int = Path(gt=0)):
+        # IDs lidos e sessão fechada ANTES da chamada HTTP: não segura conexão do pool.
         with sessions() as session:
-            return OwnedOrdersClient(session, owner_context.get(), client).order(pedido_id).model_dump(mode="json")
+            owned = pedido_id in owned_order_ids(session, owner_context.get())
+        if not owned:
+            raise OrdersError(404, "Pedido não encontrado nesta sessão.")
+        return client.order(pedido_id).model_dump(mode="json")
 
     @app.get("/chat/pedidos")
     def browser_orders():
         with sessions() as session:
-            return list_browser_orders(session, owner_context.get(), client)
+            order_ids = owned_order_ids(session, owner_context.get())
+        return fetch_orders(order_ids, client, BROWSER_SCOPE)
 
     @app.post("/chat/conversas", status_code=201)
     def create_conversation():
@@ -177,7 +214,8 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
     def get_conversation_orders(conversation_id: UUID):
         with sessions() as session:
             find_conversation(session, conversation_id)
-            return list_conversation_orders(session, conversation_id, client)
+            order_ids = conversation_order_ids(session, conversation_id)
+        return fetch_orders(order_ids, client, CONVERSATION_SCOPE)
 
     @app.post("/chat/conversas/{conversation_id}/mensagens")
     def send_message(conversation_id: UUID, payload: IncomingMessage):
@@ -185,7 +223,9 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
         if not content:
             raise HTTPException(422, "A mensagem não pode ser vazia.")
         with sessions.begin() as session:
-            conversation = find_conversation(session, conversation_id, lock=True)
+            # nowait: se a mensagem anterior ainda está na IA, responde 409 em vez de
+            # enfileirar requisições segurando conexão do pool.
+            conversation = find_conversation(session, conversation_id, lock=True, nowait=True)
             previous = session.scalar(select(MessageRequest).where(
                 MessageRequest.conversa_id == conversation.id,
                 MessageRequest.mensagem_id == str(payload.mensagem_id),

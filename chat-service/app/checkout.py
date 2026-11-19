@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from .models import CheckoutAttempt, Message, new_id, now
-from .orders import OrdersError
+from .orders import NOT_REGISTERED, OrdersError
 
 
 def confirm_purchase(sessions, conversation_id, purchase_id, orders, find, snapshot):
@@ -59,6 +59,9 @@ def confirm_purchase(sessions, conversation_id, purchase_id, orders, find, snaps
     with sessions.begin() as session:
         conversation = find(session, conversation_id, lock=True)
         attempt = session.scalar(select(CheckoutAttempt).where(CheckoutAttempt.compra_id == purchase_id).with_for_update())
+        if attempt is None:
+            # Uma confirmação concorrente foi recusada sem efeito e removeu a tentativa.
+            raise HTTPException(502, NOT_REGISTERED)
         if attempt.status == "confirmado":
             return snapshot(session, conversation)
         if attempt.status == "recusado":
@@ -75,6 +78,13 @@ def confirm_purchase(sessions, conversation_id, purchase_id, orders, find, snaps
                 replacement_id = new_id()
                 conversation.compra = {**conversation.compra, "id": replacement_id, "status": "preparando"}
                 conversation.chave_idempotencia = replacement_id
+            elif exc.rejected_without_effect:
+                # Recusa anterior a qualquer efeito (401/403 do token interno): nada a recuperar.
+                # Remove a tentativa e libera a seleção com o MESMO id/chave de idempotência,
+                # de modo que confirmar de novo com o mesmo compra_id volta a tentar.
+                session.delete(attempt)
+                conversation.estado = "preparando"
+                conversation.compra = {**conversation.compra, "status": "preparando"}
             # Em resultado incerto, mantém confirmando + payload original persistido.
         else:
             attempt.status = "confirmado"

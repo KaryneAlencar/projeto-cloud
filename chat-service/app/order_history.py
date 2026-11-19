@@ -4,8 +4,8 @@ from .models import CheckoutAttempt, Conversation, ConversationAccess
 from .orders import OrdersError
 
 
-def list_conversation_orders(session, conversation_id, orders):
-    """Pedidos vinculados a esta conversa; status atualizado pela API de pedidos."""
+def conversation_order_ids(session, conversation_id):
+    """Somente leitura local: IDs dos pedidos registrados nesta conversa."""
     attempts = session.scalars(select(CheckoutAttempt).where(
         CheckoutAttempt.conversa_id == str(conversation_id),
         CheckoutAttempt.status == "confirmado",
@@ -17,11 +17,20 @@ def list_conversation_orders(session, conversation_id, orders):
     conversation = session.get(Conversation, str(conversation_id))
     if conversation and conversation.pedido_id and conversation.pedido_id not in ids:
         ids.insert(0, conversation.pedido_id)
+    return list(dict.fromkeys(ids))
+
+
+def fetch_orders(order_ids, orders, scope):
+    """Chamadas HTTP em série: quem chama NÃO deve estar com uma sessão do banco aberta."""
     results = []
-    for order_id in dict.fromkeys(ids):
+    for order_id in order_ids:
         order = orders.order(order_id)
         results.append({"pedido_id": order.id, "status": order.status, "total": float(order.total)})
-    return {"escopo": "pedidos registrados nesta conversa", "pedidos": results}
+    return {"escopo": scope, "pedidos": results}
+
+
+CONVERSATION_SCOPE = "pedidos registrados nesta conversa"
+BROWSER_SCOPE = "pedidos deste navegador"
 
 
 def owned_order_ids(session, owner):
@@ -35,11 +44,9 @@ def owned_order_ids(session, owner):
 
 
 def list_browser_orders(session, owner, orders):
-    results = []
-    for order_id in owned_order_ids(session, owner):
-        order = orders.order(order_id)
-        results.append({"pedido_id": order.id, "status": order.status, "total": float(order.total)})
-    return {"escopo": "pedidos deste navegador", "pedidos": results}
+    # Usado dentro da transação da mensagem (ferramenta da IA); os endpoints HTTP
+    # leem os IDs, fecham a sessão e só então chamam fetch_orders.
+    return fetch_orders(owned_order_ids(session, owner), orders, BROWSER_SCOPE)
 
 
 class OwnedOrdersClient:

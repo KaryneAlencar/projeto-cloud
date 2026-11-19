@@ -162,14 +162,14 @@ def infrastructure_checks(report, aws, out):
 
     def tasks_in_two_zones():
         zones = {}
-        for key in ("api", "worker"):
+        for key in services:
             arns = aws("ecs", "list-tasks", "--cluster", cluster, "--service-name", services[key])["taskArns"]
             tasks = aws("ecs", "describe-tasks", "--cluster", cluster, "--tasks", *arns)["tasks"]
             zones[key] = sorted({task["availabilityZone"] for task in tasks})
             instances = [task.get("containerInstanceArn") for task in tasks]
             assert len(zones[key]) >= 2, f"{key}: tasks em uma única AZ ({zones[key]})"
             assert len(set(instances)) == len(instances), f"{key}: duas réplicas na mesma instância"
-        return f"api {zones['api']}, worker {zones['worker']}"
+        return ", ".join(f"{key} {zones[key]}" for key in zones)
 
     def targets_healthy():
         lines = []
@@ -191,7 +191,8 @@ def infrastructure_checks(report, aws, out):
         group = aws("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names",
                     out["autoscaling_group_name"])["AutoScalingGroups"][0]
         in_service = [i for i in group["Instances"] if i["LifecycleState"] == "InService"]
-        assert len(in_service) >= 2, f"{len(in_service)} instâncias InService"
+        # 4 serviços x 2 tasks, 2 tasks awsvpc por t3.medium: 4 instâncias em repouso.
+        assert len(in_service) >= 4, f"{len(in_service)} instâncias InService"
         return f"{len(in_service)} EC2 InService (min {group['MinSize']}, max {group['MaxSize']})"
 
     def database_private():
@@ -236,7 +237,7 @@ def infrastructure_checks(report, aws, out):
         return ", ".join(lines)
 
     report.check("ECS: serviços estáveis, sem IP público", services_stable)
-    report.check("ECS: API e worker em duas AZs e instâncias distintas", tasks_in_two_zones)
+    report.check("ECS: quatro serviços em duas AZs e instâncias distintas", tasks_in_two_zones)
     report.check("ALB: targets saudáveis", targets_healthy)
     report.check("Capacity Provider e Auto Scaling Group", capacity_provider)
     report.check("RDS privado e criptografado", database_private)

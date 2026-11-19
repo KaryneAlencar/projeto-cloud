@@ -11,11 +11,9 @@ class Settings:
     orders_api_url: str = "http://127.0.0.1:8000"
     orders_timeout: float = 5.0
     ai_provider: str = "gemini"
-    openai_api_key: str = ""
-    openai_model: str = ""
     ai_timeout: float = 120.0
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
     cookie_secure: bool = False
     session_days: int = 30
     allowed_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8080", "http://localhost:8080")
@@ -26,8 +24,6 @@ class Settings:
     def ai_configured(self):
         if self.ai_provider == "gemini":
             return bool(self.gemini_api_key and self.gemini_model)
-        if self.ai_provider == "openai":
-            return bool(self.openai_api_key and self.openai_model)
         return False
 
     @classmethod
@@ -43,8 +39,8 @@ class Settings:
         if timeout <= 0:
             raise RuntimeError("ORDERS_API_TIMEOUT deve ser positivo")
         provider = os.getenv("AI_PROVIDER", "gemini")
-        if provider not in {"gemini", "openai", "commands"}:
-            raise RuntimeError("AI_PROVIDER deve ser gemini, openai ou commands")
+        if provider not in {"gemini", "commands"}:
+            raise RuntimeError("AI_PROVIDER deve ser gemini ou commands")
         ai_timeout = float(os.getenv("AI_TIMEOUT", "120"))
         if not 0 < ai_timeout <= 120:
             raise RuntimeError("AI_TIMEOUT deve ser maior que 0 e no máximo 120 segundos")
@@ -52,8 +48,7 @@ class Settings:
         if not 1 <= session_days <= 365:
             raise RuntimeError("SESSION_DAYS deve estar entre 1 e 365 dias")
         return cls(url, os.getenv("ORDERS_API_URL", "http://127.0.0.1:8000").rstrip("/"), timeout,
-                   provider, os.getenv("OPENAI_API_KEY", ""), os.getenv("OPENAI_MODEL", ""),
-                   ai_timeout, os.getenv("GEMINI_API_KEY", "").strip(), os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                   provider, ai_timeout, os.getenv("GEMINI_API_KEY", "").strip(), os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
                    os.getenv("COOKIE_SECURE", "false").lower() == "true",
                    session_days,
                    tuple(origin.strip().rstrip("/") for origin in os.getenv("APP_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8080,http://localhost:8080").split(",") if origin.strip()),

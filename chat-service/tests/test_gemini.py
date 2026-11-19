@@ -1,12 +1,12 @@
 import io
 import json
 import unittest
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 from app.ai import AIError
 from app.config import Settings
-from app.gemini import GeminiGenerateContent
+from app.gemini import UNAVAILABLE, GeminiGenerateContent
 
 
 def response(parts, finish="STOP"):
@@ -32,6 +32,8 @@ class GeminiTests(unittest.TestCase):
         payload = json.loads(req.data)
         self.assertIn("Estado: null", payload["systemInstruction"]["parts"][0]["text"])
         self.assertTrue(all("parametersJsonSchema" in t for t in payload["tools"][0]["functionDeclarations"]))
+        # A IA nunca recebe ferramenta de compra/confirmação.
+        self.assertFalse([t["name"] for t in payload["tools"][0]["functionDeclarations"] if "confirm" in t["name"] or "compr" in t["name"].replace("preparar_compra", "")])
         items.extend(output)
         calls = [item for item in output if item["type"] == "function_call"]
         for call in calls:
@@ -47,12 +49,33 @@ class GeminiTests(unittest.TestCase):
     def test_quota_and_missing_key(self):
         self.assertFalse(Settings("unused").ai_configured)
         self.assertTrue(self.settings.ai_configured)
-        with self.assertRaisesRegex(AIError, "GEMINI_API_KEY"):
+        with self.assertRaises(AIError) as missing:
             GeminiGenerateContent(Settings("unused")).generate([], 10)
+        # Cliente recebe mensagem genérica; o detalhe de configuração fica em .internal (log).
+        self.assertEqual(str(missing.exception), UNAVAILABLE)
+        self.assertEqual(missing.exception.code, "gemini_not_configured")
+        self.assertIn("GEMINI_API_KEY", missing.exception.internal)
         with patch("app.gemini.urlopen", side_effect=HTTPError("https://example.test", 429, "quota", {}, None)):
             with self.assertRaisesRegex(AIError, "Limite de uso") as captured:
                 self.provider.generate([], 10)
         self.assertEqual(captured.exception.code, 'gemini_http_429')
+
+    def test_key_model_and_config_errors_are_generic_for_client(self):
+        for code in (400, 401, 403, 404):
+            with patch("app.gemini.urlopen", side_effect=HTTPError("https://example.test", code, "denied", {}, None)):
+                with self.assertRaises(AIError) as captured:
+                    self.provider.generate([], 10)
+            self.assertEqual(str(captured.exception), UNAVAILABLE)
+            self.assertEqual(captured.exception.code, f"gemini_http_{code}")
+            self.assertTrue(captured.exception.internal)
+            self.assertNotIn("GEMINI", str(captured.exception))
+
+    def test_incomplete_read_becomes_ai_error(self):
+        from http.client import IncompleteRead
+        with patch("app.gemini.urlopen", side_effect=IncompleteRead(b"{")):
+            with self.assertRaises(AIError) as captured:
+                self.provider.generate([], 10)
+        self.assertEqual(captured.exception.code, "gemini_transport_error")
 
     def test_token_limit_distinguished_from_timeout(self):
         with patch("app.gemini.urlopen", return_value=response([], finish="MAX_TOKENS")):
@@ -63,6 +86,15 @@ class GeminiTests(unittest.TestCase):
             with self.assertRaises(AIError) as captured:
                 self.provider.generate([], 10)
         self.assertEqual(captured.exception.code, 'gemini_timeout')
+        # Timeout de conexão chega embrulhado em URLError e recebe o mesmo código.
+        with patch("app.gemini.urlopen", side_effect=URLError(TimeoutError("timed out"))):
+            with self.assertRaises(AIError) as captured:
+                self.provider.generate([], 10)
+        self.assertEqual(captured.exception.code, 'gemini_timeout')
+        with patch("app.gemini.urlopen", side_effect=URLError(ConnectionRefusedError())):
+            with self.assertRaises(AIError) as captured:
+                self.provider.generate([], 10)
+        self.assertEqual(captured.exception.code, 'gemini_transport_error')
 
     def test_transient_503_retries_same_payload_then_succeeds(self):
         error = HTTPError("https://example.test", 503, "unavailable", {}, None)

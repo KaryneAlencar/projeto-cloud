@@ -7,7 +7,7 @@
 | Frontend | `docker build -t insper-eats-frontend ./frontend` | 8080 | GET /healthz | Chat Service |
 | Chat | `docker build -t insper-eats-chat ./chat-service` | 8001, variável PORT | GET /health | PostgreSQL, API de pedidos, Gemini |
 | API existente | Dockerfile.api da Pessoa 1 | 8000 | GET /health | PostgreSQL |
-| Worker existente | Dockerfile.worker da Pessoa 1 | sem HTTP | a definir pela Pessoa 1 | PostgreSQL e SQS |
+| Worker existente | Dockerfile.worker da Pessoa 1 | sem HTTP | arquivo `/tmp/worker-heartbeat`, tocado a cada volta do laço; falha após 120 s sem toque | PostgreSQL e SQS |
 
 Os comandos de construção partem da raiz do repositório. As imagens da Pessoa 2 executam
 sem usuário root, excluem arquivos .env e não incorporam chaves. O frontend usa build
@@ -19,6 +19,8 @@ Não há login nem senha padrão de usuário na aplicação.
 
 `scripts/start-local.ps1` aplica compose.yaml + compose.app.yaml e gera .env.docker a
 partir das credenciais locais existentes, com escape adequado para a URL PostgreSQL.
+No Linux/macOS, `scripts/start-local.sh` faz o mesmo sem .env.docker: usa APP_DATABASE_URL
+do .env da raiz e cadastra um catálogo inicial quando `/produtos` está vazio.
 O arquivo base e os Dockerfiles da Pessoa 1 permanecem intactos.
 
 Banco e API iniciam antes do chat, com verificações de saúde. O frontend só inicia depois
@@ -29,6 +31,10 @@ Para escolher portas:
 
 ```powershell
 .\scripts\start-local.ps1 -FrontendPort 8080 -ApiPort 8002 -ChatPort 8003
+```
+
+```bash
+FRONTEND_PORT=8080 API_PORT=8002 CHAT_PORT=8003 ./scripts/start-local.sh
 ```
 
 Para consultar logs, na raiz do repositório:
@@ -43,6 +49,7 @@ Para parar sem apagar dados:
 docker compose --env-file .env --env-file .env.docker -f compose.yaml -f compose.app.yaml stop
 ```
 
+Com o `start-local.sh`, os mesmos comandos dispensam os dois `--env-file`.
 Não execute `down -v` no ambiente normal: isso remove os volumes do banco.
 
 ## Variáveis para o ECS
@@ -52,11 +59,15 @@ Não execute `down -v` no ambiente normal: isso remove os volumes do banco.
 | CHAT_DATABASE_URL | chat, segredo | URL PostgreSQL persistente, com driver postgresql+psycopg |
 | GEMINI_API_KEY | chat, segredo | Chave do projeto do Google AI Studio |
 | AI_PROVIDER | chat | gemini em operação; commands somente para roteiro de desenvolvimento |
-| GEMINI_MODEL | chat | Modelo disponível na conta; exemplo gemini-2.5-flash |
+| GEMINI_MODEL | chat | Modelo disponível na conta; exemplo gemini-3.8-flash |
 | AI_TIMEOUT | chat | Orçamento total de IA, até 120 segundos |
 | ORDERS_API_URL | chat | Endereço interno da API de pedidos |
 | ORDERS_API_TIMEOUT | chat | Prazo independente da API, padrão 5 segundos |
 | ORDERS_INTERNAL_TOKEN | chat e API, segredo | Token compartilhado enviado em X-Internal-Token; sem ele /pedidos responde 503 |
+| DATABASE_URL | API e worker, segredo | URL PostgreSQL do banco de pedidos, com driver postgresql+psycopg |
+| DB_POOL_SIZE, DB_MAX_OVERFLOW, DB_POOL_TIMEOUT | API e worker | Pool de conexões; padrão 10, 5 e 5 segundos. No ECS o worker usa 2 e 1 |
+| SQS_QUEUE_NAME | worker | Nome da fila de pedidos |
+| AWS_REGION | worker | Região do SQS; o código não fixa região |
 | COOKIE_SECURE | chat | true no endereço HTTPS publicado; false somente no HTTP local |
 | SESSION_DAYS | chat | Validade da sessão anônima, padrão 30 dias |
 | APP_ORIGINS | chat | Origem pública exata, com esquema e porta se houver, separada por vírgulas |
@@ -66,7 +77,10 @@ Não execute `down -v` no ambiente normal: isso remove os volumes do banco.
 | VITE_CHAT_MODE | build frontend | api |
 | VITE_CHAT_API_URL | build frontend | /api para usar o mesmo domínio |
 
-No ECS, fornecer segredos por Secrets Manager/Parameter Store e permissões da task.
+No ECS, o Terraform entrega os segredos pelo Secrets Manager: a task definition guarda
+só o ARN, e a execution role de cada serviço lê apenas os secrets dele
+(`terraform/secrets.tf`, `terraform/ecs_services.tf`). O valor de ORDERS_INTERNAL_TOKEN é
+gerado pelo Terraform e entregue igual à API e ao chat.
 Variáveis VITE_* são públicas; nunca colocar chaves ou senhas nelas. O frontend deve
 encaminhar o cookie e o cabeçalho X-CSRF-Token ao Chat Service. Não exponha o banco nem
 a API de pedidos diretamente ao público; a API existente não implementa autorização de comprador.
@@ -78,15 +92,22 @@ O Nginx resolve o endereço de CHAT_UPSTREAM novamente usando o DNS do container
 permitindo substituição do serviço. DNS_RESOLVER pode sobrescrever esse servidor.
 Na AWS, CHAT_UPSTREAM precisa apontar para um endereço interno realmente configurado
 pela infraestrutura; o nome chat do Docker Compose não é criado automaticamente no ECS.
+O Terraform cria esses endereços no Cloud Map: `http://chat.insper-eats-sp.internal:8001`
+para o frontend e `http://api.insper-eats-sp.internal:8000` em ORDERS_API_URL
+(`terraform/locals.tf`).
 O backend de pedidos mantém `/produtos` e `/pedidos`, consumidos somente pelo chat.
 Não encaminhe diretamente `/api/chat` sem remover o prefixo /api, pois o serviço não o registra.
 O exemplo publica tudo por um único domínio para evitar configuração CORS e compartilhamento
 de cookies entre origens. No ALB/proxies, configurar um prazo de inatividade compatível
 com a espera de até 150 segundos. O timeout de 120 segundos da IA é para o ciclo inteiro.
 
-Reservas/limites de CPU/memória e políticas de escalabilidade devem ser definidos pela
-Pessoa 1 conforme a capacidade EC2 e medições de carga. O padrão de dois processos é
-configurável e não equivale a uma recomendação de dimensionamento final para ECS.
+Reservas, limites e políticas de escalabilidade estão definidos no Terraform
+(`terraform/variables.tf` e `terraform/ecs_services.tf`): cada task tem 256 CPU units,
+limite de 512 MiB e reserva de 384 MiB; cada serviço vai de 2 a 4 tasks, por CPU a 60%
+(API, chat e frontend) ou por backlog da fila (worker). A conta e os limites conhecidos
+estão em [REQUISITOS.md](REQUISITOS.md). Esses valores ainda não foram calibrados por
+medição de carga em `sa-east-1`. O chat roda com `WEB_CONCURRENCY=2` e `stop_timeout`
+de 170 segundos, para concluir respostas em andamento na troca de task.
 
 ## Persistência e inicialização
 
@@ -98,7 +119,9 @@ Para evoluções futuras do schema, adotar migrações versionadas antes de muda
 
 Preferir banco/usuário exclusivos do chat no RDS. Com banco compartilhado localmente,
 o código não importa os modelos do backend nem escreve em suas tabelas diretamente.
-Configurar backup e restauração no serviço persistente com a Pessoa 1.
+No Terraform, o chat tem banco e usuário próprios (`insper_eats_chat` / `insper_chat`),
+criados pela task db-init, e o RDS mantém backups automáticos de 7 dias
+(`terraform/database.tf`). A restauração não foi ensaiada.
 
 ## Sessão, CSRF e autorização
 
@@ -149,7 +172,13 @@ Os logs da aplicação são JSON com timestamp, level, logger, request_id e mess
 Cada resposta inclui X-Request-ID; UUID válido enviado pelo cliente é preservado.
 Os eventos incluem tempos HTTP, rodadas de IA, retentativas e erros do provedor. Não
 registram corpo de mensagem, cookies, CSRF, chave ou URL de banco com credenciais.
-A Pessoa 1 pode enviá-los ao CloudWatch pelo driver de logs das tasks.
+No ECS, os logs dos quatro serviços vão para o CloudWatch pelo driver `awslogs`, nos
+grupos `/ecs/insper-eats-sp/<serviço>`, com retenção de 30 dias
+(`terraform/modules/ecs-service/main.tf`). O Nginx do frontend gera o X-Request-ID de
+cada requisição; o chat o registra e o repassa à API de pedidos, que o grava na linha
+`pedido_criado`. Filtros de métrica sobre esses logs alimentam os alarmes de falhas da
+aplicação (`terraform/observability.tf`); as consultas para seguir um request_id estão
+em [RUNBOOK.md](RUNBOOK.md).
 
 Health checks não fazem chamada paga à IA. `ia_configurada=true` significa apenas
 presença da chave/modelo, não comprova validade, quota ou disponibilidade do Google.

@@ -2,9 +2,16 @@ import { useEffect, useState } from 'react'
 import { chat, demoMode, money } from './chat'
 import type { OrderSummary } from './chat'
 
-const statusLabels: Record<string, string> = { recebido: 'Recebido', confirmado: 'Confirmado', cancelado: 'Cancelado', simulado: 'Simulado' }
+const statusLabels: Record<string, string> = {
+  recebido: 'Recebido',
+  confirmado: 'Confirmado',
+  cancelado: 'Cancelado',
+  simulado: 'Simulado',
+}
 
-export default function OrdersPanel({ refreshKey, onUpdate }: { refreshKey?: string; onUpdate: (orders: OrderSummary[]) => void }) {
+type Props = { refreshKey?: string; onUpdate: (orders: OrderSummary[]) => void }
+
+export default function OrdersPanel({ refreshKey, onUpdate }: Props) {
   const [orders, setOrders] = useState<OrderSummary[]>([])
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
@@ -41,12 +48,35 @@ export default function OrdersPanel({ refreshKey, onUpdate }: { refreshKey?: str
   }, [refreshKey, revision, onUpdate])
 
   return <section className="history-panel" aria-label="Meus pedidos" aria-busy={busy}>
-    <div className="history-heading"><div><p className="eyebrow">ACOMPANHE POR AQUI</p><h2>Meus pedidos</h2></div><button className="text-button" disabled={busy} onClick={() => setRevision(value => value + 1)} aria-label="Atualizar pedidos">↻ Atualizar</button></div>
+    <div className="history-heading">
+      <div>
+        <p className="eyebrow">ACOMPANHE POR AQUI</p>
+        <h2>Meus pedidos</h2>
+      </div>
+      <button
+        className="text-button"
+        disabled={busy}
+        onClick={() => setRevision(value => value + 1)}
+        aria-label="Atualizar pedidos"
+      >
+        ↻ Atualizar
+      </button>
+    </div>
     <p className="order-help">{demoMode ? 'Pedidos simulados neste navegador.' : 'Pedidos feitos neste navegador, entre suas conversas.'}</p>
     {busy && !orders.length && <p className="order-help" role="status">Buscando seus pedidos…</p>}
     {error && <p className="error" role="alert">{error}{orders.length > 0 && ' Mostrando a última atualização disponível.'}</p>}
     {!busy && !error && !orders.length && <p className="order-help">Você ainda não tem pedidos registrados nesta sessão.</p>}
-    <ul className="history-list" aria-live="polite">{orders.map(order => <li key={order.pedido_id}><div><strong>Pedido #{order.pedido_id}</strong><span className={`order-badge status-${order.status}`}>{statusLabels[order.status] || order.status}</span></div><span>{money(order.total)}</span></li>)}</ul>
+    <ul className="history-list" aria-live="polite">
+      {orders.map(order => (
+        <li key={order.pedido_id}>
+          <div>
+            <strong>Pedido #{order.pedido_id}</strong>
+            <span className={`order-badge status-${order.status}`}>{statusLabels[order.status] || order.status}</span>
+          </div>
+          <span>{money(order.total)}</span>
+        </li>
+      ))}
+    </ul>
     {updated && <p className="history-updated">Atualizado às {updated} · atualização automática</p>}
   </section>
 }

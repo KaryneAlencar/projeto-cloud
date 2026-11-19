@@ -3,6 +3,8 @@
 > Registro do estado em 05/11/2026. Depois desta data, `/pedidos` passou a exigir
 > `ORDERS_INTERNAL_TOKEN` (backend/pedidos.py), o repositório foi reorganizado na raiz e a
 > infraestrutura AWS passou a ser descrita em `terraform/`. Consulte o README da raiz.
+> As evidências da etapa manual em Ohio (06/11/2026) estão em `docs/evidencias/ohio/`;
+> os scripts `.ps1` citados abaixo têm equivalentes `.sh` em `scripts/`.
 
 ## Antes e depois
 

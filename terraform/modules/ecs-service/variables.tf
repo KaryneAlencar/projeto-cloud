@@ -108,7 +108,7 @@ variable "health_check_command" {
 }
 
 variable "stop_timeout" {
-  description = "Segundos entre SIGTERM e SIGKILL ao parar o contêiner (máximo 120)."
+  description = "Segundos entre SIGTERM e SIGKILL ao parar o contêiner (em Fargate, máximo 120)."
   type        = number
   default     = 30
 }

@@ -30,6 +30,11 @@ output "service" {
   value       = aws_ecs_service.this
 }
 
+output "requires_compatibilities" {
+  description = "Compatibilidade exigida pela task definition (EC2 ou FARGATE)."
+  value       = aws_ecs_task_definition.this.requires_compatibilities
+}
+
 output "container" {
   description = "Definição do contêiner, mais CPU e memória da task."
   value       = merge(local.container, { cpu_units = var.cpu, memory_mib = var.memory })

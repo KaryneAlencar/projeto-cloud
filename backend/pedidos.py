@@ -16,9 +16,12 @@ from models import (
     EventoOutbox
 )
 
+import logging
 import os
 from hmac import compare_digest
 from fastapi import Header
+
+logger = logging.getLogger("insper-eats-api")
 
 
 def exigir_credencial_interna(
@@ -35,8 +38,10 @@ def exigir_credencial_interna(
             detail="Autenticacao interna nao configurada"
         )
 
+    # Em bytes: compare_digest com str não ASCII lança TypeError (viraria 500).
     if not x_internal_token or not compare_digest(
-        x_internal_token, token_esperado
+        x_internal_token.encode("utf-8"),
+        token_esperado.encode("utf-8")
     ):
         raise HTTPException(
             status_code=401,
@@ -77,7 +82,8 @@ def detalhes_pedido(session: Session, pedido: Pedido):
 def criar_pedido(
     dados: PedidoCreate,
     response: Response,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID")
 ):
     ids = [item.produto_id for item in dados.itens]
 
@@ -181,6 +187,13 @@ def criar_pedido(
 
         session.commit()
         session.refresh(pedido)
+
+        # Mesmo request_id dos logs do chat e do Nginx: permite seguir uma
+        # compra de ponta a ponta. Sem dados pessoais.
+        logger.info(
+            "pedido_criado pedido_id=%s request_id=%s total=%s",
+            pedido.id, (x_request_id or "-")[:64], pedido.total
+        )
 
 
     except IntegrityError:

@@ -12,7 +12,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.api
     environment:
-      DATABASE_URL: ${APP_DATABASE_URL:?Execute scripts/start-local.ps1 primeiro}
+      DATABASE_URL: ${APP_DATABASE_URL:?Execute scripts/start-local.sh (ou .ps1) primeiro}
       # /pedidos responde 503 sem este token; o chat envia o mesmo valor.
       ORDERS_INTERNAL_TOKEN: ${ORDERS_INTERNAL_TOKEN:-insper-eats-local-only}
     ports: ["127.0.0.1:${API_PORT:-8002}:8000"]
@@ -30,7 +30,7 @@ services:
     build: ./chat-service
     env_file: ./chat-service/.env
     environment:
-      CHAT_DATABASE_URL: ${APP_DATABASE_URL:?Execute scripts/start-local.ps1 primeiro}
+      CHAT_DATABASE_URL: ${APP_DATABASE_URL:?Execute scripts/start-local.sh (ou .ps1) primeiro}
       ORDERS_API_URL: http://api:8000
       ORDERS_INTERNAL_TOKEN: ${ORDERS_INTERNAL_TOKEN:-insper-eats-local-only}
       AI_PROVIDER: ${AI_PROVIDER:-gemini}

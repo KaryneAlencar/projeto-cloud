@@ -3,7 +3,9 @@
 Apoio para gravar o vídeo do projeto final (10 a 15 minutos, seis etapas na
 ordem do enunciado). Explica como o Terraform funciona, como executá-lo e o que
 mostrar e dizer em cada etapa. O detalhe de cada comando de teste está em
-[`terraform/README.md`](../terraform/README.md).
+[`terraform/README.md`](../terraform/README.md); o mapa entre o enunciado e o
+código, em [`REQUISITOS.md`](REQUISITOS.md); o tratamento de cada alarme, em
+[`RUNBOOK.md`](RUNBOOK.md).
 
 Os nomes abaixo usam o prefixo padrão `insper-eats-sp` (região `sa-east-1`).
 
@@ -24,8 +26,10 @@ folga antes da gravação.
       arguir qualquer integrante sobre qualquer parte.
 - [ ] Gravar as etapas 2 e 4 com o ambiente ligado; destruir depois.
 
-O ambiente ligado custa na ordem de US$ 13 a 15 por dia. O número é uma
-estimativa minha, confira na calculadora da AWS. Suba, grave e destrua.
+O ambiente ligado custava na ordem de US$ 13 a 15 por dia quando chat e
+frontend rodavam em Fargate. A estimativa não foi refeita para a frota atual, de
+4 instâncias t3.medium em repouso, e deve ficar um pouco acima; confira na
+calculadora da AWS. Suba, grave e destrua.
 
 ## 2. Como executar
 
@@ -40,24 +44,35 @@ read -rs TF_VAR_gemini_api_key && export TF_VAR_gemini_api_key   # digite a chav
 ```
 
 Pré-requisitos na máquina: Terraform 1.11 ou mais novo, AWS CLI v2, Docker em
-execução, Python 3 e bash.
+execução, Python 3 e bash. Na conta: cota de vCPU On-Demand ("Running On-Demand
+Standard instances", código `L-1216C47A`) de pelo menos 8 para as 4 instâncias
+t3.medium em repouso, e de 20 para o máximo de 10 instâncias.
 
 O que `deploy.sh` faz, em ordem:
 
 1. Confere ferramentas, Docker e credenciais; mostra a conta AWS.
-2. Cria o bucket S3 do state remoto (`bootstrap/`) e gera `backend.hcl`.
-3. Roda `terraform init` com esse backend e `terraform apply`.
+2. Deriva da própria chave do Gemini a versão do secret: uma chave nova em
+   `TF_VAR_gemini_api_key` é regravada; a mesma chave não gera mudança. Sem a
+   variável, implanta o chat em modo de comandos, sem IA.
+3. Cria o bucket S3 do state remoto (`bootstrap/`) e gera `backend.hcl`.
+4. Confere a cota de vCPU: abaixo de 8 interrompe; abaixo de 20 avisa.
+5. Roda `terraform apply`.
 
-Leva de 25 a 35 minutos. No fim, imprime a URL da aplicação. Repetir o comando
-é seguro: só aplica o que mudou.
+A estimativa é de 30 a 40 minutos na primeira vez. No fim, imprime a URL da
+aplicação. Repetir o comando é seguro: só aplica o que mudou. A versão da chave
+do Gemini fica em `gemini.auto.tfvars` (ignorado pelo Git), então um `terraform
+apply` direto não regrava o secret.
 
 Depois:
 
 ```bash
 python3 scripts/verify_deploy.py     # confere AWS e aplicação; grava relatório em evidencias/
 terraform output                     # URLs, nomes e ARNs para navegar no console
-terraform destroy                    # ao final da gravação
+./destroy.sh                         # ao final da gravação
 ```
+
+`./destroy.sh` remove o ambiente e, em seguida, o bucket do state, sem
+perguntas.
 
 Para alcançar a API de pedidos em `http://<alb>:8000` (documentação e testes),
 copie `terraform.tfvars.example` para `terraform.tfvars` e ponha seu IP em
@@ -81,7 +96,7 @@ independente. Na prática, a ordem é esta:
 | 3 | RDS PostgreSQL (10 a 20 min) e os secrets com as URLs de conexão | a URL precisa do endpoint do banco |
 | 4 | Cluster ECS, launch template, Auto Scaling Group (em zero), Capacity Provider, ALB, Cloud Map | base para os serviços |
 | 5 | Task `db-init` em Fargate (`scripts/run-db-init.sh`) | precisa do banco, dos secrets, da imagem e do NAT |
-| 6 | Os 4 serviços ECS; o Capacity Provider sobe 2 instâncias EC2 | só depois do banco pronto |
+| 6 | Os 4 serviços ECS; o Capacity Provider sobe 4 instâncias EC2 | só depois do banco pronto |
 | 7 | Auto scaling, alarmes e dashboard | referenciam os serviços |
 
 O apply só termina quando os quatro serviços estão estáveis
@@ -204,9 +219,9 @@ flowchart TB
         nat["NAT Gateway, um por zona"]
       end
       subgraph app["Sub-redes privadas de aplicação"]
-        fe["frontend Nginx<br/>Fargate, 2 a 4 tasks"]
-        chat["chat FastAPI<br/>Fargate, 2 a 4 tasks"]
-        subgraph ec2["Auto Scaling Group 0 a 4 t3.medium + Capacity Provider"]
+        subgraph ec2["Cluster ECS sobre EC2: Auto Scaling Group 0 a 10 t3.medium + Capacity Provider"]
+          fe["frontend Nginx<br/>2 a 4 tasks"]
+          chat["chat FastAPI<br/>2 a 4 tasks"]
           api["API de pedidos<br/>2 a 4 tasks"]
           worker["worker<br/>2 a 4 tasks"]
         end
@@ -259,17 +274,17 @@ Região São Paulo. Para cada item: o que é, para que serve aqui e a quem se li
 | VPC > Security groups | `-alb-sg`, `-frontend-sg`, `-chat-sg`, `-api-sg`, `-worker-sg`, `-rds-sg` | abrir o `-rds-sg` e mostrar que a origem das regras são outros grupos, não IPs |
 | EC2 > Load balancers | `insper-eats-sp-alb` | listeners 80 e 8000; sub-redes públicas |
 | EC2 > Target groups | `-frontend-tg`, `-api-tg` | tipo `ip`, 2 targets healthy, health check `/healthz` e `/health` |
-| ECS > Clusters | `insper-eats-sp-cluster` | 4 serviços com 2/2 tasks; aba Infraestrutura mostra o Capacity Provider e as 2 instâncias |
-| ECS > serviço `-api-service` | tasks e configuração | placement: spread por zona, binpack por memória, `distinctInstance` |
+| ECS > Clusters | `insper-eats-sp-cluster` | 4 serviços com 2/2 tasks; aba Infraestrutura mostra o Capacity Provider e as 4 instâncias, cada uma com 2 tasks |
+| ECS > serviço `-api-service` | tasks e configuração | capacity provider EC2 (o mesmo nos 4 serviços); placement: spread por zona, binpack por memória, `distinctInstance` |
 | ECS > Task definitions | `insper-eats-sp-api` | variáveis sensíveis aparecem como ARN de secret, não como valor |
-| EC2 > Auto Scaling groups | `insper-eats-sp-ecs-asg` | mínimo 0, máximo 4; proteção de scale-in; quem define o desejado é o Capacity Provider |
+| EC2 > Auto Scaling groups | `insper-eats-sp-ecs-asg` | mínimo 0, máximo 10; 4 instâncias em repouso; proteção de scale-in; quem define o desejado é o Capacity Provider |
 | ECR | `insper-eats-sp-api`, `-worker`, `-chat`, `-frontend` | tags imutáveis, derivadas do hash do código |
 | RDS | `insper-eats-sp-postgres` | Multi-AZ, não público, criptografado, backups de 7 dias |
 | SQS | `insper-eats-sp-orders`, `-orders-dlq` | política de redrive com 5 recebimentos |
 | IAM > Funções | `-api-execution-role`, `-worker-task-role` | execution role lê só os secrets do serviço; a task role do worker só acessa a fila de pedidos |
 | Secrets Manager | `insper-eats-sp/database-url` e os outros 3 | mostrar a lista e os metadados; **não clicar em "Recuperar valor do segredo"** |
 | CloudWatch > Painéis | `insper-eats-sp-observabilidade` | 14 widgets |
-| CloudWatch > Alarmes | 14 alarmes `insper-eats-sp-*` | todos OK; ação: tópico SNS `-alertas` |
+| CloudWatch > Alarmes | 16 alarmes `insper-eats-sp-*` | todos OK; ação: tópico SNS `-alertas` |
 | CloudWatch > Grupos de logs | `/ecs/insper-eats-sp/worker` | linha de confirmação do pedido da etapa 2 |
 
 `terraform output` lista URLs, nomes e ARNs para chegar rápido a cada tela.
@@ -323,8 +338,9 @@ dynamic "placement_constraints" {
 }
 ```
 
-Os blocos são `dynamic` porque o mesmo módulo atende Fargate, que não aceita
-placement. O trecho seguinte é do Capacity Provider.
+Os blocos são `dynamic` porque o módulo também aceita Fargate, que não tem
+placement; os quatro serviços usam EC2, então os dois blocos valem para todos.
+O trecho seguinte é do Capacity Provider.
 
 ```hcl
 managed_scaling {
@@ -341,12 +357,38 @@ de tasks (API por CPU a 60%; worker por backlog, 5 mensagens por task). Quando
 uma task não acha lugar, o Capacity Provider aumenta o Auto Scaling Group; quando
 sobra instância vazia, ele reduz. O ASG nunca é ajustado à mão. Health checks
 existem em três pontos: contêiner (ECS), target group (ALB) e instância (ASG).
+O do worker, que não tem porta, é um arquivo de heartbeat tocado a cada volta
+do laço: 120 s sem toque e a task é substituída. Na troca de task, o worker
+encerra limpo no SIGTERM e o chat tem `stop_timeout` de 170 s para terminar
+respostas em andamento (em EC2 não há o teto de 120 s do Fargate).
 
-**Por que chat e frontend estão em Fargate.** Uma t3.medium tem 3 interfaces de
-rede, o que dá 2 tasks `awsvpc` por instância. Essas vagas são da API e do
-worker. Colocar os serviços novos em EC2 dobraria o número de instâncias em
-repouso; em Fargate eles não disputam vagas. API e worker continuam em ECS
-sobre EC2, que é o modelo exigido e o que foi validado em Ohio.
+**Como a frota de EC2 foi dimensionada.** Os quatro serviços rodam em ECS sobre
+EC2, pelo mesmo Capacity Provider; o enunciado não aceita Fargate como
+capacidade principal. Três fatos definem o número de instâncias:
+
+- Em modo `awsvpc`, cada task ocupa uma interface de rede. Uma t3.medium tem 3,
+  e uma é da própria instância: cabem 2 tasks por instância.
+- `distinctInstance` impede duas réplicas do mesmo serviço na mesma instância,
+  e o spread por zona distribui as réplicas entre as duas AZs.
+- São 4 serviços com 2 tasks cada, ou seja, 8 tasks: 4 instâncias em repouso,
+  2 por zona, cada uma com tasks de dois serviços diferentes. Com todos os
+  serviços em 4 tasks são 16 tasks e 8 instâncias.
+- O máximo do Auto Scaling Group é 10 (`ecs_asg_max_size`). As 2 instâncias
+  além das 8 são a folga para um rolling deployment no pico: a task nova
+  precisa de vaga antes de a antiga sair.
+
+Dois limites conhecidos desse desenho, para dizer com clareza:
+
+- O gargalo é a interface de rede, não CPU nem memória. Cada instância roda
+  com cerca de 25% de CPU e de memória reservadas (2 tasks de 256 CPU units e
+  512 MiB numa máquina de 2 vCPU e 4 GiB) e não aceita uma terceira task. A
+  família t3 não aceita ENI trunking, que elevaria o limite.
+- Depois de um pico, o ASG tende a não encolher sozinho. O Capacity Provider
+  só remove instância sem task, e o ECS não reconsolida tasks em execução; a
+  consolidação é manual (`RUNBOOK.md`, "asg-at-max").
+
+A única task em Fargate é a `db-init`: roda uma vez, antes de existirem
+instâncias, e termina.
 
 **Dados, mensageria e segurança** (`messaging.tf`, `ecs_services.tf`).
 
@@ -379,6 +421,7 @@ Para falar:
 | RDS Multi-AZ | failover automático do banco | dobro do custo da instância |
 | ASG começando em zero, gerido pelo Capacity Provider | paga só pelas instâncias em uso | primeira subida e deploys levam minutos |
 | `distinctInstance` | perder uma EC2 nunca derruba um serviço | deploy precisa de instância extra temporária |
+| Quatro serviços em EC2, 2 tasks `awsvpc` por t3.medium | atende à exigência de ECS sobre EC2; um só modelo de capacidade; security group por task | 4 instâncias em repouso, 8 no pico e até 10 com deploy; cerca de 75% de CPU e memória de cada instância sem uso; a frota não encolhe sozinha depois do pico |
 | API fora da porta 80, restrita por IP | `/produtos` sem autenticação não fica exposto | testes exigem liberar o IP |
 | Sem HTTPS por padrão | funciona sem domínio próprio | tráfego em claro até informar certificado e domínio |
 
@@ -387,13 +430,18 @@ Para falar:
 | Falha | Impacto | Como se detecta | Recuperação | Situação |
 | --- | --- | --- | --- | --- |
 | Task interrompida | nenhum para o cliente, a outra réplica atende | alarme `*-tasks-low`, eventos do serviço | ECS cria outra em cerca de 1 minuto | automática |
-| Perda de uma EC2 | capacidade cai à metade por minutos | alarmes de tasks e de targets | ASG substitui a instância; ECS recoloca as tasks | automática |
+| Perda de uma EC2 | até dois serviços ficam com uma réplica a menos por minutos | alarmes de tasks e de targets | ASG substitui a instância; ECS recoloca as tasks | automática |
 | Deploy com defeito | nenhum, a versão antiga segue no ar | eventos do serviço | circuit breaker desfaz o deployment | automática |
 | Zona indisponível | capacidade reduzida; conexões ao banco caem, em geral por 1 a 2 minutos | alarmes de targets, eventos do RDS | ALB usa a outra zona; RDS promove a réplica; ASG repõe na zona restante | automática |
-| Mensagem que sempre falha | um pedido fica sem confirmação | alarme `dlq-messages`, log do worker | corrigir a causa e reenviar da DLQ | detecção automática, correção manual |
+| Mensagem que sempre falha | um pedido fica sem confirmação | alarmes `orders-queue-age` e `dlq-messages`, log do worker | corrigir a causa e reenviar da DLQ (`aws sqs start-message-move-task`) | detecção automática, correção manual |
 | Dado apagado ou corrompido | perda de pedidos até a restauração | relato ou inconsistência; não há alarme | restaurar o RDS para um instante dos últimos 7 dias, em nova instância | manual, não ensaiada |
-| Gemini fora do ar | chat responde erro; pedidos já feitos seguem | erros 503 no log do chat | aguardar o provedor | sem contingência |
+| Gemini fora do ar | chat responde erro; pedidos já feitos e a confirmação pelo botão seguem | alarme `chat-app-errors`; `ai_dependency_failure` no log do chat | trocar `gemini_model` e aplicar, ou `ai_provider = "commands"` (sem IA) | manual, não ensaiada |
 | Região indisponível | plataforma inteira fora do ar | fora da AWS; os alarmes ficam na mesma região | ver abaixo | proposta |
+
+A coluna "Recuperação" descreve o que o código declara. Nenhuma dessas falhas
+foi provocada em `sa-east-1`, porque o ambiente ainda não foi aplicado lá; os
+testes estão no "Nível 4" de `terraform/README.md` e os procedimentos manuais,
+em `RUNBOOK.md`.
 
 **Desastre regional.** O Terraform é parametrizado por região. Num clone limpo
 do repositório, o comando abaixo cria outro bucket de state e recria a
@@ -441,8 +489,20 @@ os dados depois que tudo falhou, com tempo e perda máxima definidos e testados.
 ## 6. Perguntas prováveis na arguição
 
 - **Por que o ASG tem mínimo zero?** Quem define a quantidade é o Capacity
-  Provider, a partir das tasks; as 2 instâncias em repouso existem porque há 2
-  réplicas com `distinctInstance`.
+  Provider, a partir das tasks; as 4 instâncias em repouso existem porque são
+  8 tasks (4 serviços, 2 réplicas) e cada t3.medium comporta 2 tasks `awsvpc`.
+- **Por que o máximo é 10 se o pico pede 8?** As 2 a mais são a folga para um
+  deploy no pico: com rolling de 200%, a task nova precisa de vaga antes de a
+  antiga sair.
+- **Por que só 2 tasks por instância, com CPU e memória sobrando?** O limite é
+  de interfaces de rede: 3 por t3.medium, uma da instância. A família t3 não
+  aceita ENI trunking. É um custo conhecido do desenho.
+- **A IA faz a compra?** Não. Ela consulta o catálogo e os pedidos e grava a
+  seleção de compra no PostgreSQL por funções reais; o pedido é criado pelo
+  servidor quando o cliente clica em confirmar. É uma decisão de segurança,
+  explicada em `REQUISITOS.md` (requisito 16).
+- **Por que não Fargate para chat e frontend?** O enunciado exige ECS sobre
+  EC2. Só a task `db-init`, que roda uma vez e termina, usa Fargate.
 - **O que acontece se dois clientes compram o último item?** A API usa
   `SELECT ... FOR UPDATE`; um recebe 201 e o outro 409.
 - **E se a mesma mensagem chegar duas vezes?** O worker vê o pedido já

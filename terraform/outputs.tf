@@ -122,6 +122,7 @@ output "alarm_names" {
     [aws_cloudwatch_metric_alarm.cluster_capacity.alarm_name],
     [aws_cloudwatch_metric_alarm.asg_at_max.alarm_name],
     [for alarm in aws_cloudwatch_metric_alarm.target_5xx : alarm.alarm_name],
+    [aws_cloudwatch_metric_alarm.alb_5xx.alarm_name],
     [aws_cloudwatch_metric_alarm.queue_age.alarm_name],
     [for alarm in aws_cloudwatch_metric_alarm.app_errors : alarm.alarm_name],
   )

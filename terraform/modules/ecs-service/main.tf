@@ -201,6 +201,14 @@ resource "aws_ecs_service" "this" {
   propagate_tags          = "SERVICE"
   wait_for_steady_state   = var.wait_for_steady_state
 
+  # No primeiro apply o ASG parte de zero: lançar as instâncias, registrá-las
+  # no cluster, puxar as imagens e passar nos health checks pode levar mais que
+  # os 20 minutos padrão.
+  timeouts {
+    create = "40m"
+    update = "40m"
+  }
+
   lifecycle {
     # O Application Auto Scaling altera desired_count em produção.
     ignore_changes = [desired_count]

@@ -16,7 +16,15 @@ class TimeoutTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 Settings.from_env()
 
-    def test_120_seconds_is_shared_across_tool_rounds(self):
+    def test_unknown_provider_is_rejected_with_clear_message(self):
+        self.assertEqual(Settings("unused").gemini_model, "gemini-3.8-flash")
+        for provider in ("openai", "outro"):
+            env = {"CHAT_DATABASE_URL": "postgresql+psycopg://unused", "AI_PROVIDER": provider}
+            with patch.dict(os.environ, env, clear=True), patch("app.config.load_dotenv"):
+                with self.assertRaisesRegex(RuntimeError, "AI_PROVIDER deve ser gemini ou commands"):
+                    Settings.from_env()
+
+    def rounds(self, clock):
         timeouts = []
         class Provider:
             def generate(self, items, timeout):
@@ -26,11 +34,29 @@ class TimeoutTests(unittest.TestCase):
                 return [{"type": "message", "content": [{"type": "output_text", "text": "Catálogo consultado."}]}]
         conversation = SimpleNamespace(id="test-timeout", compra=None)
         orders = SimpleNamespace(products=lambda: [])
-        # Início, primeira rodada, retorno aos 40s, segunda rodada, retorno aos 90s.
-        with patch("app.ai.time.monotonic", side_effect=[0, 0, 40, 40, 90]):
+        with patch("app.ai.time.monotonic", side_effect=clock):
             result = respond(conversation, [], "Ver catálogo", orders, Provider(), 120)
-        self.assertEqual(timeouts, [120, 80])
         self.assertEqual(result, "Catálogo consultado.")
+        return timeouts
+
+    def test_120_seconds_is_shared_and_each_round_is_capped_at_45(self):
+        # Início, primeira rodada, retorno aos 40s, segunda rodada, retorno aos 90s.
+        self.assertEqual(self.rounds([0, 0, 40, 40, 90]), [45, 45])
+        # Com menos de 45 s de orçamento, a rodada recebe apenas o restante.
+        self.assertEqual(self.rounds([0, 0, 44, 100, 110]), [45, 20])
+
+    def test_pool_is_explicit_and_configurable_by_environment(self):
+        from app.database import connect_database
+        url = "postgresql+psycopg://user:pass@127.0.0.1:1/unused"  # Engine preguiçoso: não conecta.
+        with patch.dict(os.environ, {}, clear=True):
+            engine, _ = connect_database(url)
+            self.assertEqual((engine.pool.size(), engine.pool._max_overflow, engine.pool._timeout), (5, 10, 5))
+        with patch.dict(os.environ, {"DB_POOL_SIZE": "2", "DB_MAX_OVERFLOW": "0"}, clear=True):
+            engine, _ = connect_database(url)
+            self.assertEqual((engine.pool.size(), engine.pool._max_overflow), (2, 0))
+        with patch.dict(os.environ, {"DB_POOL_SIZE": "0"}, clear=True):
+            with self.assertRaises(RuntimeError):
+                connect_database(url)
 
     def test_late_model_response_is_not_accepted(self):
         provider = SimpleNamespace(generate=lambda items, timeout: [{"type": "message", "content": [{"type": "output_text", "text": "Resposta tardia"}]}])

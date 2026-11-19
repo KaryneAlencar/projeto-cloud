@@ -21,7 +21,6 @@ __pycache__/
 .gitignore
 
 # Testes e arquivos temporarios
-teste_concorrencia.py
 .pytest_cache/
 *.log
 *.tmp

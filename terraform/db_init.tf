@@ -3,7 +3,8 @@
 #
 # É a única task que recebe a credencial de administrador do RDS, por uma
 # execution role própria. Roda em Fargate para não depender das instâncias
-# EC2, que só existem depois que os serviços pedem capacidade.
+# EC2, que só existem depois que os serviços pedem capacidade. É a única task
+# em Fargate: roda uma vez e termina; os quatro serviços usam EC2.
 
 resource "aws_cloudwatch_log_group" "db_init" {
   name              = "/ecs/${local.name}/db-init"

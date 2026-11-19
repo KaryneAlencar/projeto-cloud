@@ -125,8 +125,8 @@ run "apply_simulado_completo" {
   }
 
   assert {
-    condition     = length(jsondecode(aws_cloudwatch_dashboard.main.dashboard_body).widgets[0].properties.alarms) == 14
-    error_message = "O widget de alarmes deve listar os 14 alarmes."
+    condition     = length(jsondecode(aws_cloudwatch_dashboard.main.dashboard_body).widgets[0].properties.alarms) == 16
+    error_message = "O widget de alarmes deve listar os 16 alarmes."
   }
 
   assert {
@@ -140,6 +140,7 @@ run "apply_simulado_completo" {
           aws_cloudwatch_metric_alarm.dlq_messages,
           aws_cloudwatch_metric_alarm.cluster_capacity,
           aws_cloudwatch_metric_alarm.asg_at_max,
+          aws_cloudwatch_metric_alarm.alb_5xx,
           aws_cloudwatch_metric_alarm.queue_age,
         ],
       ) : contains(alarm.alarm_actions, aws_sns_topic.alerts.arn) && contains(alarm.ok_actions, aws_sns_topic.alerts.arn)

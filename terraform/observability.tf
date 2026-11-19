@@ -19,9 +19,10 @@ resource "aws_sns_topic_subscription" "email" {
 locals {
   # Alarmes "menos de 2 tasks em execução", um por serviço.
   task_count_alarms = {
-    api    = module.api.service_name
-    worker = module.worker.service_name
-    chat   = module.chat.service_name
+    api      = module.api.service_name
+    worker   = module.worker.service_name
+    chat     = module.chat.service_name
+    frontend = module.frontend.service_name
   }
 
   # Alarmes por target group do ALB: targets saudáveis e respostas 5xx.
@@ -266,6 +267,31 @@ resource "aws_cloudwatch_metric_alarm" "target_5xx" {
   ok_actions    = [aws_sns_topic.alerts.arn]
 }
 
+# Erros gerados pelo próprio ALB (502/503/504): sem targets saudáveis ou com
+# timeout, o balanceador responde sozinho e a métrica dos targets fica em zero.
+resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
+  alarm_name        = "${local.name}-alb-5xx"
+  alarm_description = "O ALB devolveu 5 ou mais respostas 5xx proprias por minuto (sem target saudavel ou timeout)"
+
+  namespace   = "AWS/ApplicationELB"
+  metric_name = "HTTPCode_ELB_5XX_Count"
+  statistic   = "Sum"
+  period      = 60
+
+  dimensions = {
+    LoadBalancer = aws_lb.main.arn_suffix
+  }
+
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 5
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+}
+
 # Profundidade da fila: a mensagem mais antiga espera há mais de 5 minutos,
 # ou seja, o worker não está dando conta (ou parou de consumir).
 resource "aws_cloudwatch_metric_alarm" "queue_age" {
@@ -437,6 +463,7 @@ locals {
     [aws_cloudwatch_metric_alarm.cluster_capacity.arn],
     [aws_cloudwatch_metric_alarm.asg_at_max.arn],
     [for alarm in aws_cloudwatch_metric_alarm.target_5xx : alarm.arn],
+    [aws_cloudwatch_metric_alarm.alb_5xx.arn],
     [aws_cloudwatch_metric_alarm.queue_age.arn],
     [for alarm in aws_cloudwatch_metric_alarm.app_errors : alarm.arn],
   )

@@ -1,9 +1,17 @@
 import json
+import logging
 from decimal import Decimal
+from http.client import HTTPException as HTTPClientError
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field, ValidationError
+
+from .logging_setup import request_id_context
+
+logger = logging.getLogger("insper-eats-chat")
+
+NOT_REGISTERED = "Não foi possível registrar o pedido agora. Nada foi cobrado nem reservado; tente novamente em instantes."
 
 
 class Product(BaseModel):
@@ -28,10 +36,14 @@ class Order(BaseModel):
 
 
 class OrdersError(Exception):
-    def __init__(self, status, detail, definitive=False):
+    def __init__(self, status, detail, definitive=False, rejected_without_effect=False):
         self.status = status
         self.detail = detail
+        # definitive: a API recusou ESTE pedido (dados/estoque); exige nova seleção.
         self.definitive = definitive
+        # rejected_without_effect: recusa antes de qualquer efeito (credencial interna);
+        # o mesmo pedido pode ser reenviado com a mesma chave de idempotência.
+        self.rejected_without_effect = rejected_without_effect
 
 
 class OrdersClient:
@@ -50,6 +62,10 @@ class OrdersClient:
             if self.internal_token:
                 headers["X-Internal-Token"] = self.internal_token
 
+            request_id = request_id_context.get()
+            if request_id and request_id != "-":
+                headers["X-Request-ID"] = request_id
+
             req = Request(
                 self.base_url + path,
                 data=json.dumps(body).encode() if body is not None else None,
@@ -67,10 +83,23 @@ class OrdersClient:
                     definitive=True,
                 ) from exc
 
+            if exc.code in {401, 403}:
+                # Token interno ausente/errado: o backend recusa antes de criar qualquer coisa.
+                logger.error("orders_auth_failure status=%s method=%s path=%s", exc.code, "POST" if body is not None else "GET", path)
+                if body is not None:
+                    raise OrdersError(502, NOT_REGISTERED, rejected_without_effect=True) from exc
+
             if exc.code == 404:
                 raise OrdersError(
                     404,
                     "Pedido não encontrado na API de pedidos.",
+                ) from exc
+
+            if body is not None:
+                # Resultado incerto: o pedido pode ter sido criado antes da falha.
+                raise OrdersError(
+                    502,
+                    "A API de pedidos não confirmou o registro do pedido. Repita a confirmação para recuperar o mesmo pedido.",
                 ) from exc
 
             raise OrdersError(
@@ -78,7 +107,7 @@ class OrdersClient:
                 "A API de pedidos não conseguiu atender à consulta.",
             ) from exc
 
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError, HTTPClientError) as exc:
             raise OrdersError(
                 503,
                 "A API de pedidos está indisponível. Tente novamente.",
