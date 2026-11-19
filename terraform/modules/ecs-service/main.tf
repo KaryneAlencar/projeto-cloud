@@ -25,6 +25,7 @@ locals {
       }
     },
     var.command == null ? {} : { command = var.command },
+    var.memory_reservation == null ? {} : { memoryReservation = var.memory_reservation },
     var.container_port == null ? {} : {
       portMappings = [{ containerPort = var.container_port, hostPort = var.container_port, protocol = "tcp" }]
     },

@@ -1,5 +1,6 @@
-# Alertas por SNS, alarmes operacionais e dashboard. Os log groups dos serviços
-# ficam no módulo ecs-service; o do db-init, em db_init.tf.
+# Alertas por SNS, alarmes operacionais, métricas extraídas dos logs e
+# dashboard. Os log groups dos serviços ficam no módulo ecs-service; o do
+# db-init, em db_init.tf.
 
 resource "aws_sns_topic" "alerts" {
   name = "${local.name}-alertas"
@@ -23,10 +24,89 @@ locals {
     chat   = module.chat.service_name
   }
 
-  # Alarmes "menos de 2 targets saudáveis no ALB".
+  # Alarmes por target group do ALB: targets saudáveis e respostas 5xx.
   target_alarms = {
     api      = aws_lb_target_group.api.arn_suffix
     frontend = aws_lb_target_group.frontend.arn_suffix
+  }
+
+  # Métricas extraídas dos logs (falhas da aplicação e métrica de negócio).
+  app_metrics_namespace = "InsperEats/${local.name}"
+
+  app_error_metrics = {
+    api    = "ErrosApi"
+    worker = "ErrosWorker"
+    chat   = "ErrosChat"
+  }
+
+  orders_confirmed_metric = "PedidosConfirmados"
+
+  # Um filtro por formato de log. Cada linha de log é um evento, então o
+  # traceback que acompanha um erro não é contado de novo.
+  #   api:    Uvicorn padrão, "ERROR:    Exception in ASGI application".
+  #   worker: logging.basicConfig, "ERROR:insper-eats-worker:Falha ...".
+  #   chat:   a aplicação loga JSON com o campo "level" e registra as falhas
+  #           de dependência (API de pedidos, IA) como WARNING com
+  #           "..._dependency_failure" na mensagem; o Uvicorn do chat loga
+  #           texto, como o da API. Os dois filtros somam na mesma métrica.
+  app_error_filters = {
+    api = {
+      service = "api"
+      pattern = "?\"ERROR:\" ?\"CRITICAL:\""
+    }
+    worker = {
+      service = "worker"
+      pattern = "?\"ERROR:\" ?\"CRITICAL:\""
+    }
+    chat = {
+      service = "chat"
+      pattern = "{ ($.level = \"ERROR\") || ($.level = \"CRITICAL\") || ($.message = \"*dependency_failure*\") }"
+    }
+    chat-uvicorn = {
+      service = "chat"
+      pattern = "?\"ERROR:\" ?\"CRITICAL:\""
+    }
+  }
+
+  # Referenciar o output do módulo faz o filtro esperar o log group existir.
+  app_log_group_names = {
+    api    = module.api.log_group.name
+    worker = module.worker.log_group.name
+    chat   = module.chat.log_group.name
+  }
+}
+
+# --- Métricas extraídas dos logs -------------------------------------------
+
+resource "aws_cloudwatch_log_metric_filter" "app_errors" {
+  for_each = local.app_error_filters
+
+  name           = "${local.name}-${each.key}-erros"
+  log_group_name = local.app_log_group_names[each.value.service]
+  pattern        = each.value.pattern
+
+  metric_transformation {
+    namespace     = local.app_metrics_namespace
+    name          = local.app_error_metrics[each.value.service]
+    value         = "1"
+    default_value = "0"
+    unit          = "Count"
+  }
+}
+
+# Métrica de negócio: pedidos confirmados pelo worker. A linha de mensagem
+# duplicada ("Pedido N ja confirmado...") fica de fora.
+resource "aws_cloudwatch_log_metric_filter" "orders_confirmed" {
+  name           = "${local.name}-pedidos-confirmados"
+  log_group_name = local.app_log_group_names["worker"]
+  pattern        = "\"INFO:insper-eats-worker:Pedido\" \"confirmado\" -\"ja confirmado\""
+
+  metric_transformation {
+    namespace     = local.app_metrics_namespace
+    name          = local.orders_confirmed_metric
+    value         = "1"
+    default_value = "0"
+    unit          = "Count"
   }
 }
 
@@ -105,10 +185,140 @@ resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
   ok_actions    = [aws_sns_topic.alerts.arn]
 }
 
+# Utilização do cluster: reserva acima de 100% significa tasks pedindo mais
+# instâncias do que o ASG tem. Durante um scale-out normal isso dura poucos
+# minutos (warm-up de 300 s); 10 minutos seguidos indicam tasks sem lugar.
+resource "aws_cloudwatch_metric_alarm" "cluster_capacity" {
+  alarm_name        = "${local.name}-cluster-capacity-high"
+  alarm_description = "Reserva do Capacity Provider acima de 100% por 10 minutos (tasks sem lugar)"
+
+  namespace   = "AWS/ECS/ManagedScaling"
+  metric_name = "CapacityProviderReservation"
+  statistic   = "Average"
+  period      = 60
+
+  dimensions = {
+    ClusterName          = aws_ecs_cluster.main.name
+    CapacityProviderName = aws_ecs_capacity_provider.ec2.name
+  }
+
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 100
+  evaluation_periods  = 10
+  datapoints_to_alarm = 10
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+}
+
+# Capacidade do ASG: no teto, o Capacity Provider não consegue mais escalar.
+# Depende de enabled_metrics no Auto Scaling Group (ecs_cluster.tf).
+resource "aws_cloudwatch_metric_alarm" "asg_at_max" {
+  alarm_name        = "${local.name}-asg-at-max"
+  alarm_description = "Auto Scaling Group no maximo de ${var.ecs_asg_max_size} instancias"
+
+  namespace   = "AWS/AutoScaling"
+  metric_name = "GroupInServiceInstances"
+  statistic   = "Maximum"
+  period      = 60
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.ecs.name
+  }
+
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.ecs_asg_max_size
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+}
+
+# Respostas do ALB: 5 ou mais respostas 5xx dos targets em um minuto, em 2 de
+# 3 minutos. Um erro isolado não dispara. Sem requisições não há dado, e isso
+# não é falha.
+resource "aws_cloudwatch_metric_alarm" "target_5xx" {
+  for_each = local.target_alarms
+
+  alarm_name        = "${local.name}-${each.key}-target-5xx"
+  alarm_description = "Targets de ${each.key} devolveram 5 ou mais respostas 5xx por minuto"
+
+  namespace   = "AWS/ApplicationELB"
+  metric_name = "HTTPCode_Target_5XX_Count"
+  statistic   = "Sum"
+  period      = 60
+
+  dimensions = {
+    LoadBalancer = aws_lb.main.arn_suffix
+    TargetGroup  = each.value
+  }
+
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 5
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+}
+
+# Profundidade da fila: a mensagem mais antiga espera há mais de 5 minutos,
+# ou seja, o worker não está dando conta (ou parou de consumir).
+resource "aws_cloudwatch_metric_alarm" "queue_age" {
+  alarm_name        = "${local.name}-orders-queue-age"
+  alarm_description = "Mensagem mais antiga da fila de pedidos com mais de 300 s"
+
+  namespace   = "AWS/SQS"
+  metric_name = "ApproximateAgeOfOldestMessage"
+  statistic   = "Maximum"
+  period      = 60
+
+  dimensions = {
+    QueueName = aws_sqs_queue.orders.name
+  }
+
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 300
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+}
+
+# Falhas da aplicação: 5 ou mais linhas de erro em 5 minutos, por serviço.
+resource "aws_cloudwatch_metric_alarm" "app_errors" {
+  for_each = local.app_error_metrics
+
+  alarm_name        = "${local.name}-${each.key}-app-errors"
+  alarm_description = "5 ou mais erros nos logs de ${each.key} em 5 minutos"
+
+  namespace   = local.app_metrics_namespace
+  metric_name = each.value
+  statistic   = "Sum"
+  period      = 300
+
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 5
+  evaluation_periods  = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+
+  depends_on = [aws_cloudwatch_log_metric_filter.app_errors]
+}
+
 # --- Dashboard -------------------------------------------------------------
 
-# Mesmos 13 widgets de backend/observability/cloudwatch-dashboard.json, com os
-# nomes e ARNs deste ambiente e as séries do chat e do frontend.
+# Os 13 widgets de backend/observability/cloudwatch-dashboard.json, com os
+# nomes e ARNs deste ambiente e as séries do chat e do frontend, mais um com a
+# métrica de negócio (pedidos confirmados): 14 widgets.
 
 locals {
   ecs_services = {
@@ -211,12 +421,24 @@ locals {
         ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", aws_sqs_queue.orders.name, { label = "Idade (segundos)" }],
       ]
     },
+    {
+      title = "Negocio - Pedidos confirmados pelo worker"
+      stat  = "Sum"
+      metrics = [
+        [local.app_metrics_namespace, aws_cloudwatch_log_metric_filter.orders_confirmed.metric_transformation[0].name, { label = "Pedidos confirmados" }],
+      ]
+    },
   ]
 
   dashboard_alarm_arns = concat(
     [for alarm in aws_cloudwatch_metric_alarm.targets_unhealthy : alarm.arn],
     [for alarm in aws_cloudwatch_metric_alarm.tasks_low : alarm.arn],
     [aws_cloudwatch_metric_alarm.dlq_messages.arn],
+    [aws_cloudwatch_metric_alarm.cluster_capacity.arn],
+    [aws_cloudwatch_metric_alarm.asg_at_max.arn],
+    [for alarm in aws_cloudwatch_metric_alarm.target_5xx : alarm.arn],
+    [aws_cloudwatch_metric_alarm.queue_age.arn],
+    [for alarm in aws_cloudwatch_metric_alarm.app_errors : alarm.arn],
   )
 }
 

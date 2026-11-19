@@ -12,7 +12,9 @@ services:
   api:
     image: insper-eats-api-verify:local
     build: {context: ./backend, dockerfile: Dockerfile.api}
-    environment: {DATABASE_URL: "postgresql+psycopg://verify:verify-local-only@db:5432/verify"}
+    environment:
+      DATABASE_URL: "postgresql+psycopg://verify:verify-local-only@db:5432/verify"
+      ORDERS_INTERNAL_TOKEN: verify-local-only-token
     depends_on:
       db: {condition: service_healthy}
     healthcheck:
@@ -26,6 +28,7 @@ services:
     environment:
       CHAT_DATABASE_URL: postgresql+psycopg://verify:verify-local-only@db:5432/verify
       ORDERS_API_URL: http://api:8000
+      ORDERS_INTERNAL_TOKEN: verify-local-only-token
       AI_PROVIDER: commands
       COOKIE_SECURE: "false"
       SESSION_COOKIE_NAME: insper_eats_verify_session

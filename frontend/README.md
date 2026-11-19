@@ -48,7 +48,7 @@ O painel Meus pedidos reúne compras das conversas da sessão e consulta o statu
 10 segundos enquanto a página está visível. O cookie HttpOnly identifica o navegador;
 o cliente inicia a sessão e envia o token CSRF nas alterações automaticamente.
 Histórico antigo sem proprietário exige recuperação administrativa, descrita em
-../docs/IMPLANTACAO.md. Para execução conjunta em containers, consulte ../../README.md.
+../docs/IMPLANTACAO.md. Para execução conjunta em containers, consulte ../README.md.
 Não há fallback silencioso para demonstração em caso de falha da API.
 
 Em produção, configure o ALB/reverse proxy para encaminhar /api ao Chat Service
@@ -58,7 +58,8 @@ AWS ou senhas nelas. A interface se comunica exclusivamente com o Chat Service.
 
 ## Contrato do Chat Service
 
-Todos os endpoints abaixo retornam a conversa completa no formato descrito a seguir:
+Os endpoints abaixo retornam a conversa completa no formato descrito a seguir. A sessão
+(POST /chat/sessao) e o painel de pedidos (GET /chat/pedidos) estão no README do Chat Service.
 
 | Método | Caminho | Corpo |
 | --- | --- | --- |
@@ -107,7 +108,8 @@ A trava de envio da interface evita cliques simultâneos nesta aba; não substit
 idempotência no servidor. A mesma tentativa de mensagem conserva mensagem_id enquanto
 o conteúdo não muda. Timeout: 150 segundos, com margem para o ciclo de IA de até 120 segundos. Em falha, o texto digitado permanece disponível.
 O navegador guarda apenas o identificador da conversa no modo integrado; o servidor
-precisa fornecer o histórico. Não há autenticação implementada nesta etapa.
+precisa fornecer o histórico. A identidade é a sessão anônima do navegador (cookie
+HttpOnly + CSRF); não há login institucional.
 
 ## Verificação
 

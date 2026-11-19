@@ -1,4 +1,4 @@
-"""Roteamento explícito provisório; será substituído pelo agente de IA."""
+"""Roteamento por comandos explícitos (AI_PROVIDER=commands), sem chamada à IA."""
 import re
 import unicodedata
 from decimal import Decimal

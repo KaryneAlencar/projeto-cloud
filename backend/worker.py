@@ -3,6 +3,7 @@ import os
 import json
 import time
 import logging
+from pathlib import Path
 
 import boto3
 from sqlmodel import Session, select
@@ -19,6 +20,10 @@ QUEUE_NAME = os.getenv(
     "SQS_QUEUE_NAME",
     "insper-eats-orders"
 )
+
+# Tocado ao fim de cada ciclo bem-sucedido; o health check do contêiner
+# (ECS e compose) falha se o arquivo ficar mais de 120 s sem atualização.
+HEARTBEAT_FILE = Path("/tmp/worker-heartbeat")
 
 sqs = boto3.client("sqs", region_name=REGION)
 
@@ -125,6 +130,8 @@ def executar_worker():
                     logger.exception(
                         "Falha ao processar mensagem"
                     )
+
+            HEARTBEAT_FILE.touch()
 
         except Exception:
             logger.exception("Falha no Worker")

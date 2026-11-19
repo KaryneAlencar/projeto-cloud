@@ -65,6 +65,12 @@ variable "memory" {
   type        = number
 }
 
+variable "memory_reservation" {
+  description = "Reserva de memória do contêiner (memoryReservation), em MiB. null não define."
+  type        = number
+  default     = null
+}
+
 variable "environment" {
   description = "Variáveis de ambiente não sensíveis."
   type        = map(string)

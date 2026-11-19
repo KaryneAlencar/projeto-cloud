@@ -119,6 +119,11 @@ output "alarm_names" {
     [for alarm in aws_cloudwatch_metric_alarm.targets_unhealthy : alarm.alarm_name],
     [for alarm in aws_cloudwatch_metric_alarm.tasks_low : alarm.alarm_name],
     [aws_cloudwatch_metric_alarm.dlq_messages.alarm_name],
+    [aws_cloudwatch_metric_alarm.cluster_capacity.alarm_name],
+    [aws_cloudwatch_metric_alarm.asg_at_max.alarm_name],
+    [for alarm in aws_cloudwatch_metric_alarm.target_5xx : alarm.alarm_name],
+    [aws_cloudwatch_metric_alarm.queue_age.alarm_name],
+    [for alarm in aws_cloudwatch_metric_alarm.app_errors : alarm.alarm_name],
   )
 }
 

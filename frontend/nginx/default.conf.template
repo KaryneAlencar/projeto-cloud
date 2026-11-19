@@ -4,6 +4,8 @@ server {
     root /usr/share/nginx/html;
     index index.html;
     server_tokens off;
+    # Maior que o idle_timeout do ALB (180 s), para o Nginx nunca fechar antes dele.
+    keepalive_timeout 190s;
     resolver ${DNS_RESOLVER} valid=10s ipv6=off;
     set $chat_upstream "${CHAT_UPSTREAM}";
     add_header X-Content-Type-Options nosniff always;

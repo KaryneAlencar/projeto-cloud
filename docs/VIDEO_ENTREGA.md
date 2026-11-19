@@ -268,8 +268,8 @@ Região São Paulo. Para cada item: o que é, para que serve aqui e a quem se li
 | SQS | `insper-eats-sp-orders`, `-orders-dlq` | política de redrive com 5 recebimentos |
 | IAM > Funções | `-api-execution-role`, `-worker-task-role` | execution role lê só os secrets do serviço; a task role do worker só acessa a fila de pedidos |
 | Secrets Manager | `insper-eats-sp/database-url` e os outros 3 | mostrar a lista e os metadados; **não clicar em "Recuperar valor do segredo"** |
-| CloudWatch > Painéis | `insper-eats-sp-observabilidade` | 13 widgets |
-| CloudWatch > Alarmes | 6 alarmes `insper-eats-sp-*` | todos OK; ação: tópico SNS `-alertas` |
+| CloudWatch > Painéis | `insper-eats-sp-observabilidade` | 14 widgets |
+| CloudWatch > Alarmes | 14 alarmes `insper-eats-sp-*` | todos OK; ação: tópico SNS `-alertas` |
 | CloudWatch > Grupos de logs | `/ecs/insper-eats-sp/worker` | linha de confirmação do pedido da etapa 2 |
 
 `terraform output` lista URLs, nomes e ARNs para chegar rápido a cada tela.

@@ -12,11 +12,11 @@ function Read-DotEnv([string]$Path) {
 }
 Push-Location $projectRoot
 try {
-    if (!(Test-Path -LiteralPath '.env')) { throw 'Configure insper-eats/.env com POSTGRES_USER, POSTGRES_PASSWORD e POSTGRES_DB.' }
+    if (!(Test-Path -LiteralPath '.env')) { throw 'Configure .env (raiz do repositório) com POSTGRES_USER, POSTGRES_PASSWORD e POSTGRES_DB.' }
     if (!(Test-Path -LiteralPath 'chat-service/.env')) { Copy-Item -LiteralPath 'chat-service/.env.example' -Destination 'chat-service/.env'; Write-Host 'Arquivo chat-service/.env criado. Preencha a chave Gemini para usar IA.' }
     $dbValues = Read-DotEnv '.env'
     foreach ($field in @('POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB')) {
-        if (!$dbValues[$field]) { throw "Preencha $field no arquivo insper-eats/.env." }
+        if (!$dbValues[$field]) { throw "Preencha $field no arquivo .env (raiz do repositório)." }
     }
     $dbUser = [Uri]::EscapeDataString($dbValues['POSTGRES_USER'])
     $dbPassword = [Uri]::EscapeDataString($dbValues['POSTGRES_PASSWORD'])

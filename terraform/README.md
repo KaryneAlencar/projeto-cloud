@@ -1,7 +1,8 @@
 # Insper Eats: infraestrutura AWS com Terraform
 
-Reproduz, com um `terraform apply`, o ambiente descrito em
-`insper_eats_guia_aws_para_terraform.pdf` e acrescenta os dois serviços que
+Reproduz, com um `terraform apply`, o ambiente montado manualmente em Ohio
+(descrito no guia `insper_eats_guia_aws_para_terraform.pdf`, que não faz parte
+deste repositório) e acrescenta os dois serviços que
 ainda não estavam na AWS (chat e frontend). O destino padrão é São Paulo
 (`sa-east-1`), com o sufixo `sp` nos nomes. Nada aqui lê, importa ou altera os
 recursos manuais de Ohio.
@@ -31,7 +32,7 @@ internet
 | Compute | Cluster ECS, Auto Scaling Group 0 a 4 de t3.medium, Capacity Provider com managed scaling, proteção e draining |
 | Serviços | API, worker, chat e frontend, 2 a 4 tasks cada, com Application Auto Scaling |
 | Entrada | ALB, target groups do tipo `ip`, HTTPS opcional |
-| Observabilidade | Log groups com retenção, 6 alarmes, tópico SNS, dashboard de 13 widgets |
+| Observabilidade | Log groups com retenção, 14 alarmes, métricas extraídas dos logs, tópico SNS, dashboard de 14 widgets |
 | Estado | Bucket S3 versionado e criptografado, com lock nativo (`bootstrap/`) |
 
 São cerca de 150 recursos.
@@ -58,7 +59,14 @@ São cerca de 150 recursos.
   `/pedidos`. O Terraform gera o valor e o entrega à API e ao chat como secret.
 - **Rollback automático** no circuit breaker dos deployments (em Ohio estava
   desligado).
-- Dois alarmes a mais: targets do frontend e tasks do chat.
+- Dez alarmes a mais (14 no total): targets do frontend e tasks do chat;
+  reserva do Capacity Provider; ASG no máximo; respostas 5xx da API e do
+  frontend; idade da mensagem mais antiga da fila; erros nos logs da API, do
+  worker e do chat.
+- Um widget a mais no dashboard (14 no total): pedidos confirmados pelo
+  worker, métrica extraída dos logs.
+- **Health check no worker**, por arquivo de heartbeat, e reserva de memória
+  (`memoryReservation`) nos quatro contêineres.
 
 ## Pré-requisitos
 
@@ -221,7 +229,7 @@ Confira ainda, à mão:
 
 ```bash
 terraform output app_url           # abra no navegador e faça uma compra pelo chat
-terraform output dashboard_url     # os 13 widgets devem mostrar dados em ~5 min
+terraform output dashboard_url     # os 14 widgets devem mostrar dados em ~5 min
 terraform plan -detailed-exitcode  # código 0 = nenhuma mudança pendente
 nc -zv -w 5 "$(terraform output -raw rds_endpoint)" 5432   # deve falhar: o RDS é privado
 ```

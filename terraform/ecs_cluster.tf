@@ -112,6 +112,10 @@ resource "aws_autoscaling_group" "ecs" {
 
   health_check_type = "EC2"
 
+  # Publica as métricas do grupo no CloudWatch (AWS/AutoScaling); o alarme de
+  # capacidade em observability.tf depende delas.
+  enabled_metrics = ["GroupDesiredCapacity", "GroupInServiceInstances"]
+
   # Exigido pela managed termination protection do Capacity Provider.
   protect_from_scale_in = true
 

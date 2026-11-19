@@ -120,13 +120,31 @@ run "apply_simulado_completo" {
   command = apply
 
   assert {
-    condition     = length(jsondecode(aws_cloudwatch_dashboard.main.dashboard_body).widgets) == 13
-    error_message = "O dashboard deve ter 13 widgets, como o validado em Ohio."
+    condition     = length(jsondecode(aws_cloudwatch_dashboard.main.dashboard_body).widgets) == 14
+    error_message = "O dashboard deve ter 14 widgets: os 13 validados em Ohio e o de pedidos confirmados."
   }
 
   assert {
-    condition     = length(jsondecode(aws_cloudwatch_dashboard.main.dashboard_body).widgets[0].properties.alarms) == 6
-    error_message = "O widget de alarmes deve listar os seis alarmes."
+    condition     = length(jsondecode(aws_cloudwatch_dashboard.main.dashboard_body).widgets[0].properties.alarms) == 14
+    error_message = "O widget de alarmes deve listar os 14 alarmes."
+  }
+
+  assert {
+    condition = alltrue([
+      for alarm in concat(
+        values(aws_cloudwatch_metric_alarm.targets_unhealthy),
+        values(aws_cloudwatch_metric_alarm.tasks_low),
+        values(aws_cloudwatch_metric_alarm.target_5xx),
+        values(aws_cloudwatch_metric_alarm.app_errors),
+        [
+          aws_cloudwatch_metric_alarm.dlq_messages,
+          aws_cloudwatch_metric_alarm.cluster_capacity,
+          aws_cloudwatch_metric_alarm.asg_at_max,
+          aws_cloudwatch_metric_alarm.queue_age,
+        ],
+      ) : contains(alarm.alarm_actions, aws_sns_topic.alerts.arn) && contains(alarm.ok_actions, aws_sns_topic.alerts.arn)
+    ])
+    error_message = "Todos os alarmes devem notificar o tópico SNS ao disparar e ao normalizar."
   }
 
   assert {

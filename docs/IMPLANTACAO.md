@@ -9,7 +9,7 @@
 | API existente | Dockerfile.api da Pessoa 1 | 8000 | GET /health | PostgreSQL |
 | Worker existente | Dockerfile.worker da Pessoa 1 | sem HTTP | a definir pela Pessoa 1 | PostgreSQL e SQS |
 
-Os comandos de construção partem da pasta insper-eats. As imagens da Pessoa 2 executam
+Os comandos de construção partem da raiz do repositório. As imagens da Pessoa 2 executam
 sem usuário root, excluem arquivos .env e não incorporam chaves. O frontend usa build
 estático servido pelo Nginx; não usa `npm run dev` em produção. O chat usa dois processos
 Uvicorn por padrão. WEB_CONCURRENCY permite ajustar essa quantidade ao dimensionamento ECS.
@@ -31,7 +31,7 @@ Para escolher portas:
 .\scripts\start-local.ps1 -FrontendPort 8080 -ApiPort 8002 -ChatPort 8003
 ```
 
-Para consultar logs, na pasta insper-eats:
+Para consultar logs, na raiz do repositório:
 
 ```powershell
 docker compose --env-file .env --env-file .env.docker -f compose.yaml -f compose.app.yaml logs --tail 80 chat
@@ -56,6 +56,7 @@ Não execute `down -v` no ambiente normal: isso remove os volumes do banco.
 | AI_TIMEOUT | chat | Orçamento total de IA, até 120 segundos |
 | ORDERS_API_URL | chat | Endereço interno da API de pedidos |
 | ORDERS_API_TIMEOUT | chat | Prazo independente da API, padrão 5 segundos |
+| ORDERS_INTERNAL_TOKEN | chat e API, segredo | Token compartilhado enviado em X-Internal-Token; sem ele /pedidos responde 503 |
 | COOKIE_SECURE | chat | true no endereço HTTPS publicado; false somente no HTTP local |
 | SESSION_DAYS | chat | Validade da sessão anônima, padrão 30 dias |
 | APP_ORIGINS | chat | Origem pública exata, com esquema e porta se houver, separada por vírgulas |

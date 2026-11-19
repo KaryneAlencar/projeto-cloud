@@ -71,6 +71,11 @@ services:
       AWS_ENDPOINT_URL: http://sqs:9324
       AWS_ACCESS_KEY_ID: local
       AWS_SECRET_ACCESS_KEY: local
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(0 if time.time() - os.path.getmtime('/tmp/worker-heartbeat') < 120 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     depends_on:
       db-init: {condition: service_completed_successfully}
       sqs: {condition: service_started}

@@ -20,6 +20,7 @@ class Settings:
     session_days: int = 30
     allowed_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8080", "http://localhost:8080")
     cookie_name: str = "insper_eats_session"
+    orders_internal_token: str = ""
 
     @property
     def ai_configured(self):
@@ -52,8 +53,9 @@ class Settings:
             raise RuntimeError("SESSION_DAYS deve estar entre 1 e 365 dias")
         return cls(url, os.getenv("ORDERS_API_URL", "http://127.0.0.1:8000").rstrip("/"), timeout,
                    provider, os.getenv("OPENAI_API_KEY", ""), os.getenv("OPENAI_MODEL", ""),
-                   ai_timeout, os.getenv("GEMINI_API_KEY", ""), os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                   ai_timeout, os.getenv("GEMINI_API_KEY", "").strip(), os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                    os.getenv("COOKIE_SECURE", "false").lower() == "true",
                    session_days,
                    tuple(origin.strip().rstrip("/") for origin in os.getenv("APP_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8080,http://localhost:8080").split(",") if origin.strip()),
-                   os.getenv("SESSION_COOKIE_NAME", "insper_eats_session"))
+                   os.getenv("SESSION_COOKIE_NAME", "insper_eats_session"),
+                   os.getenv("ORDERS_INTERNAL_TOKEN", "").strip())

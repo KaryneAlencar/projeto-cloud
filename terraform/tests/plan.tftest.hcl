@@ -258,6 +258,11 @@ run "servicos_ecs" {
     condition     = length(module.worker.service.load_balancer) == 0 && length(module.chat.service.load_balancer) == 0
     error_message = "Worker e chat não devem ter target group."
   }
+
+  assert {
+    condition     = module.worker.container.healthCheck.command[0] == "CMD" && strcontains(module.worker.container.healthCheck.command[3], "/tmp/worker-heartbeat")
+    error_message = "O worker deve ter health check pelo arquivo de heartbeat."
+  }
 }
 
 run "task_definitions_sem_segredos_em_texto" {
@@ -315,6 +320,14 @@ run "task_definitions_sem_segredos_em_texto" {
   assert {
     condition     = module.api.container.cpu_units == 256 && module.api.container.memory_mib == 512
     error_message = "As tasks devem usar 256 CPU units e 512 MiB."
+  }
+
+  assert {
+    condition = alltrue([
+      for container in [module.api.container, module.worker.container, module.chat.container, module.frontend.container] :
+      container.memoryReservation == 384
+    ])
+    error_message = "Os quatro contêineres devem reservar 384 MiB (memoryReservation)."
   }
 }
 
@@ -412,8 +425,62 @@ run "observabilidade" {
       "insper-eats-sp-worker-tasks-low",
       "insper-eats-sp-chat-tasks-low",
       "insper-eats-sp-dlq-messages",
+      "insper-eats-sp-cluster-capacity-high",
+      "insper-eats-sp-asg-at-max",
+      "insper-eats-sp-api-target-5xx",
+      "insper-eats-sp-frontend-target-5xx",
+      "insper-eats-sp-orders-queue-age",
+      "insper-eats-sp-api-app-errors",
+      "insper-eats-sp-worker-app-errors",
+      "insper-eats-sp-chat-app-errors",
     ])
     error_message = "Conjunto de alarmes diferente do esperado."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.cluster_capacity.metric_name == "CapacityProviderReservation" &&
+      aws_cloudwatch_metric_alarm.cluster_capacity.threshold == 100 &&
+      aws_cloudwatch_metric_alarm.cluster_capacity.dimensions["CapacityProviderName"] == "insper-eats-sp-ecs-capacity-provider"
+    )
+    error_message = "Alarme do cluster: reserva do Capacity Provider acima de 100%."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.asg_at_max.threshold == 4 &&
+      aws_cloudwatch_metric_alarm.asg_at_max.dimensions["AutoScalingGroupName"] == "insper-eats-sp-ecs-asg" &&
+      contains(aws_autoscaling_group.ecs.enabled_metrics, "GroupInServiceInstances")
+    )
+    error_message = "Alarme do ASG: instâncias em serviço no máximo, com as métricas do grupo habilitadas."
+  }
+
+  assert {
+    condition = alltrue([
+      for alarm in aws_cloudwatch_metric_alarm.target_5xx :
+      alarm.metric_name == "HTTPCode_Target_5XX_Count" && alarm.statistic == "Sum" && alarm.treat_missing_data == "notBreaching"
+    ])
+    error_message = "Alarmes de 5xx: soma por target group, sem dado não é falha."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.queue_age.threshold == 300 && aws_cloudwatch_metric_alarm.queue_age.dimensions["QueueName"] == "insper-eats-sp-orders"
+    error_message = "Alarme da fila: mensagem mais antiga com mais de 300 s na fila principal."
+  }
+
+  assert {
+    condition = alltrue([
+      for service, alarm in aws_cloudwatch_metric_alarm.app_errors :
+      alarm.namespace == "InsperEats/insper-eats-sp" && contains([
+        for filter in aws_cloudwatch_log_metric_filter.app_errors : filter.metric_transformation[0].name
+      ], alarm.metric_name)
+    ])
+    error_message = "Cada alarme de falhas da aplicação deve ler uma métrica gerada por um filtro de log."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_log_metric_filter.app_errors["worker"].log_group_name == "/ecs/insper-eats-sp/worker" && aws_cloudwatch_log_metric_filter.orders_confirmed.metric_transformation[0].name == "PedidosConfirmados"
+    error_message = "Os filtros do worker devem ler o log group do worker e publicar PedidosConfirmados."
   }
 
   assert {

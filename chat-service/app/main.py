@@ -53,7 +53,7 @@ def create_app(settings=None, *, engine=None, orders=None, ai=None):
         database.dispose()
         from sqlalchemy.orm import sessionmaker
         database, sessions = engine, sessionmaker(engine, expire_on_commit=False)
-    client = orders or OrdersClient(settings.orders_api_url, settings.orders_timeout)
+    client = orders or OrdersClient(settings.orders_api_url, settings.orders_timeout, settings.orders_internal_token)
     provider = ai or (GeminiGenerateContent(settings) if settings.ai_provider == "gemini" else OpenAIResponses(settings))
 
     @asynccontextmanager

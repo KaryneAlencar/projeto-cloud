@@ -1,5 +1,6 @@
 
 import json
+import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -28,7 +29,11 @@ def criar_pedido(cliente):
     requisicao = Request(
         URL,
         data=json.dumps(dados).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            # /pedidos exige o mesmo token configurado na API.
+            "X-Internal-Token": os.environ["ORDERS_INTERNAL_TOKEN"]
+        },
         method="POST"
     )
 

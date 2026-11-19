@@ -1,5 +1,4 @@
 import json
-import os
 from decimal import Decimal
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -36,10 +35,10 @@ class OrdersError(Exception):
 
 
 class OrdersClient:
-    def __init__(self, base_url, timeout=5):
+    def __init__(self, base_url, timeout=5, internal_token=""):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self.internal_token = os.getenv("ORDERS_INTERNAL_TOKEN", "")
+        self.internal_token = internal_token
 
     def _get(self, path, body=None):
         try:

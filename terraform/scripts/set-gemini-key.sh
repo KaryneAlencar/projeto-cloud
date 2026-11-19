@@ -24,14 +24,17 @@ if [[ -t 0 ]]; then
 else
   IFS= read -r key
 fi
-if [[ -z "${key// /}" ]]; then
+# Remove espaços e quebras de linha (CR/LF) nas pontas: iriam para o cabeçalho HTTP.
+key="$(tr -d '\r\n' <<<"$key" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+if [[ -z "$key" ]]; then
   echo "ERRO: chave vazia." >&2
   exit 1
 fi
 
 # O valor vai por stdin, não pela linha de comando (visível em `ps`).
-aws secretsmanager put-secret-value --region "$region" --secret-id "$secret" \
-  --secret-string file:///dev/stdin >/dev/null <<<"$key"
+# printf, e não <<<, para não acrescentar uma quebra de linha ao secret.
+printf '%s' "$key" | aws secretsmanager put-secret-value --region "$region" --secret-id "$secret" \
+  --secret-string file:///dev/stdin >/dev/null
 unset key
 echo "Secret ${secret} atualizado."
 

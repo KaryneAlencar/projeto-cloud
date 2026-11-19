@@ -273,6 +273,17 @@ variable "task_memory" {
   default     = 512
 }
 
+variable "task_memory_reservation" {
+  description = "Reserva de memória (soft limit) do contêiner de cada task, em MiB. Deve ser menor ou igual a task_memory."
+  type        = number
+  default     = 384
+
+  validation {
+    condition     = var.task_memory_reservation > 0 && var.task_memory_reservation <= var.task_memory
+    error_message = "task_memory_reservation deve ser maior que zero e menor ou igual a task_memory."
+  }
+}
+
 variable "api_cpu_target" {
   description = "Alvo de CPU média (%) da API. Baixe temporariamente (ex.: 5) para demonstrar o scale-out, como no teste de Ohio."
   type        = number

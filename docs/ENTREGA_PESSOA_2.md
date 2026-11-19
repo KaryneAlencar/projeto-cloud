@@ -1,5 +1,9 @@
 # Entrega da Pessoa 2 — 05/11/2026
 
+> Registro do estado em 05/11/2026. Depois desta data, `/pedidos` passou a exigir
+> `ORDERS_INTERNAL_TOKEN` (backend/pedidos.py), o repositório foi reorganizado na raiz e a
+> infraestrutura AWS passou a ser descrita em `terraform/`. Consulte o README da raiz.
+
 ## Antes e depois
 
 | Frente | Antes | Estado entregue |
@@ -51,7 +55,7 @@ ou disponibilidade na AWS. A tentativa de smoke no serviço local normal encontr
 serviço indisponível; não há comprovação de chamada real ao Gemini nesta entrega.
 
 O ambiente isolado permanece na porta 18080 para inspeção, com dados de verificação.
-Ele não deve ser usado como ambiente real. Pode ser parado, na pasta insper-eats, com:
+Ele não deve ser usado como ambiente real. Pode ser parado, na raiz do repositório, com:
 
 ```powershell
 docker compose -p insper-eats-verification -f compose.verify.yaml stop

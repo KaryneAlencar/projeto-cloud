@@ -41,6 +41,14 @@ locals {
     ]
   }
 
+  # O worker não tem porta: o laço principal toca um arquivo de heartbeat ao
+  # fim de cada ciclo (backend/worker.py). Um ciclo leva cerca de 10 s de long
+  # polling mais o processamento; sem heartbeat por 120 s, a task é substituída.
+  worker_health_check = [
+    "CMD", "python", "-c",
+    "import os, sys, time; sys.exit(0 if time.time() - os.path.getmtime('/tmp/worker-heartbeat') < 120 else 1)",
+  ]
+
   # Muda quando as credenciais giram, para as tasks relerem os secrets.
   credentials_marker = "${var.credentials_version}.${var.gemini_api_key_version}"
 }
@@ -63,6 +71,8 @@ module "api" {
   container_port = 8000
   cpu            = var.task_cpu
   memory         = var.task_memory
+
+  memory_reservation = var.task_memory_reservation
 
   environment = {
     CREDENTIALS_VERSION = local.credentials_marker
@@ -127,6 +137,8 @@ module "worker" {
   cpu    = var.task_cpu
   memory = var.task_memory
 
+  memory_reservation = var.task_memory_reservation
+
   environment = {
     AWS_REGION          = var.region
     SQS_QUEUE_NAME      = aws_sqs_queue.orders.name
@@ -153,6 +165,8 @@ module "worker" {
       Resource = aws_sqs_queue.orders.arn
     }]
   })
+
+  health_check_command = local.worker_health_check
 
   log_group_name     = local.log_groups["worker"]
   log_retention_days = var.log_retention_days
@@ -265,6 +279,8 @@ module "chat" {
   cpu            = var.task_cpu
   memory         = var.task_memory
 
+  memory_reservation = var.task_memory_reservation
+
   # O chat encerra requisições em andamento por até 160 s; o ECS permite 120.
   stop_timeout = 120
 
@@ -337,6 +353,8 @@ module "frontend" {
   container_port = 8080
   cpu            = var.task_cpu
   memory         = var.task_memory
+
+  memory_reservation = var.task_memory_reservation
 
   environment = {
     CHAT_UPSTREAM = local.chat_internal

@@ -5,7 +5,7 @@ API existente da Pessoa 1 na porta 8000. Não altera arquivos nem tabelas do bac
 
 ## Configuração e execução
 
-Na pasta `insper-eats/chat-service`, ative `.venv` e instale `requirements.txt`.
+Na pasta `chat-service`, ative `.venv` e instale `requirements.txt`.
 No primeiro preparo, crie o ambiente com `python -m venv .venv` e copie
 `.env.example` para `.env`. Se já existirem, preserve a configuração local.
 
@@ -21,6 +21,7 @@ Configure no `.env` exclusivo do chat (nunca no frontend):
 CHAT_DATABASE_URL=postgresql+psycopg://USUARIO:SENHA@127.0.0.1:5433/NOME_DO_BANCO
 ORDERS_API_URL=http://127.0.0.1:8000
 ORDERS_API_TIMEOUT=5
+ORDERS_INTERNAL_TOKEN=MESMO_VALOR_DA_API
 AI_PROVIDER=gemini
 GEMINI_API_KEY=SUA_CHAVE_LOCAL
 GEMINI_MODEL=gemini-2.5-flash
@@ -41,7 +42,7 @@ mas as compras desse modo também são REAIS após clicar em Confirmar pedido.
 
 Abra http://127.0.0.1:8001/docs e http://127.0.0.1:8001/health.
 A saúde verifica o banco; não faz chamada paga à IA nem teste de disponibilidade do provedor.
-Mantenha PostgreSQL e a API da Pessoa 1 em execução. Na pasta `insper-eats`,
+Mantenha PostgreSQL e a API da Pessoa 1 em execução. Na raiz do repositório,
 `docker compose up -d db` inicia o banco configurado no compose existente.
 
 ## Interface
@@ -62,7 +63,8 @@ O frontend no modo demo continua separado, com compras apenas simuladas.
 ## Ferramentas da IA
 
 - listar_produtos: consulta GET /produtos com preços e estoque reais.
-- consultar_pedido: consulta GET /pedidos/{id}.
+- consultar_pedido: consulta GET /pedidos/{id}, restrito aos pedidos da sessão.
+- listar_meus_pedidos: lista os pedidos confirmados da sessão atual do navegador.
 - preparar_compra: valida IDs e quantidades contra o catálogo, calcula estimativa com Decimal.
 - atualizar_entrega: atualiza os dados fornecidos e cria nova versão da seleção.
 - cancelar_selecao: limpa apenas uma seleção não confirmada.
@@ -119,10 +121,14 @@ Evoluções futuras de colunas precisarão de migrações.
 | Método | Caminho | Função |
 | --- | --- | --- |
 | GET | /health | Saúde do chat/banco e configuração de IA |
+| POST | /chat/sessao | Inicia a sessão (cookie HttpOnly) e retorna csrf_token |
+| POST | /chat/sessao/encerrar | Revoga a sessão |
 | GET | /chat/produtos | Catálogo real |
-| GET | /chat/pedidos/{id} | Pedido real |
+| GET | /chat/pedidos | Pedidos da sessão |
+| GET | /chat/pedidos/{id} | Pedido real da sessão |
 | POST | /chat/conversas | Criar conversa |
 | GET | /chat/conversas/{id} | Recuperar histórico e seleção |
+| GET | /chat/conversas/{id}/pedidos | Pedidos desta conversa |
 | POST | /chat/conversas/{id}/mensagens | conteudo e mensagem_id UUID |
 | POST | /chat/conversas/{id}/confirmar | Confirma versão da seleção |
 
