@@ -12,16 +12,15 @@ Projeto final de Computação em Nuvem, Insper.
 ## Sumário
 
 1. [O produto](#o-produto)
-2. [Situação da entrega](#situação-da-entrega)
-3. [Como rodar](#como-rodar)
-4. [Arquitetura](#arquitetura)
-5. [Como cada parte funciona](#como-cada-parte-funciona)
-6. [Decisões e compromissos](#decisões-e-compromissos)
-7. [Falhas, riscos e recuperação](#falhas-riscos-e-recuperação)
-8. [Limites conhecidos](#limites-conhecidos)
-9. [Onde cada requisito está no código](#onde-cada-requisito-está-no-código)
-10. [Estrutura do repositório e documentação](#estrutura-do-repositório-e-documentação)
-11. [Equipe](#equipe)
+2. [Como rodar](#como-rodar)
+3. [Arquitetura](#arquitetura)
+4. [Como cada parte funciona](#como-cada-parte-funciona)
+5. [Decisões e compromissos](#decisões-e-compromissos)
+6. [Falhas, riscos e recuperação](#falhas-riscos-e-recuperação)
+7. [Limites conhecidos](#limites-conhecidos)
+8. [Onde cada requisito está no código](#onde-cada-requisito-está-no-código)
+9. [Estrutura do repositório e documentação](#estrutura-do-repositório-e-documentação)
+10. [Equipe](#equipe)
 
 ## O produto
 
@@ -50,17 +49,6 @@ cantina com o estoque já baixado.
 parceira, taxa de entrega opcional para o cliente e licença da plataforma para
 outros campi. Cada campus novo é um ambiente criado pelo mesmo Terraform,
 mudando a variável `environment` (e `region`, se for o caso).
-
-## Situação da entrega
-
-| Verificação | Como reproduzir | Resultado |
-| --- | --- | --- |
-| Formatação e validação do Terraform | `terraform fmt -check -recursive && terraform validate` | passa |
-| 16 cenários com o provider AWS simulado: rede, security groups, RDS privado, filas, placement, escala, alarmes, ausência de segredos em texto claro | `terraform test` | 16 passed |
-| Ensaio local das mesmas imagens, do mesmo `db-init` e das mesmas variáveis das task definitions, com PostgreSQL e ElasticMQ no lugar de RDS e SQS | [Nível 1](terraform/README.md#nível-1-ensaio-local-em-docker-cerca-de-3-minutos-sem-aws) | 10 ok |
-| Testes do chat com PostgreSQL real e IA simulada | `chat-service/tests/run_postgres.py` | passam |
-| Ambiente manual anterior, em Ohio: failover de task, failover de EC2 e carga | [docs/evidencias](docs/evidencias/README.md) | registrado em 06/11/2026 |
-| `./deploy.sh` em `sa-east-1` seguido de `scripts/verify_deploy.py` (19 verificações) | [Nível 3](terraform/README.md#nível-3-verificação-do-ambiente-implantado) | **pendente** |
 
 ## Como rodar
 
