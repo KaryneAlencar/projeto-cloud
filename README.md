@@ -7,7 +7,7 @@ infraestrutura em São Paulo (`sa-east-1`) com Terraform, sem passos no console.
 
 Projeto final de Computação em Nuvem, Insper.
 
-> **Apresentação:** [vídeo](https://youtu.be/iK5mZbTSrtM)
+> **Apresentação:** [vídeo](https://youtu.be/VbQPjy_mg4k)
 
 ## Sumário
 
